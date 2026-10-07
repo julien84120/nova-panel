@@ -1,5 +1,4 @@
 import { Bell, Check, ChevronDown, Languages, LogOut, Menu, Moon, Search, Server, Sun, User } from "lucide-react"
-import { useState } from "react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -13,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
-import { hosts } from "@/data/mock"
+import { useDashboard } from "@/hooks/DashboardProvider"
 import { useTheme } from "@/hooks/useTheme"
 import { useI18n } from "@/i18n/I18nProvider"
 import { cn } from "@/lib/utils"
@@ -21,9 +20,16 @@ import { cn } from "@/lib/utils"
 export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { t, lang, setLang } = useI18n()
   const { theme, toggle } = useTheme()
-  const [selectedHost, setSelectedHost] = useState<string>("all")
+  const { data, error, selectedHost, setSelectedHost } = useDashboard()
+  const hosts = data?.hosts ?? []
 
-  const hostLabel = selectedHost === "all" ? t("header.allHosts") : selectedHost
+  const hostLabel = selectedHost === "all" ? t("header.allHosts") : (hosts.find((h) => h.id === selectedHost)?.name ?? "…")
+  const hasError = !!error || data?.sources.some((s) => s.mode === "error")
+  const status = hasError
+    ? { variant: "destructive" as const, label: t("header.partial") }
+    : data?.demo
+      ? { variant: "warning" as const, label: t("header.demo") }
+      : { variant: "success" as const, label: t("header.live") }
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-background/80 px-4 backdrop-blur-md md:px-6">
@@ -45,9 +51,12 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-1.5">
-        <Badge variant="warning" className="mr-1 hidden sm:inline-flex">
-          {t("header.demo")}
-        </Badge>
+        {(data || error) && (
+          <Badge variant={status.variant} className="mr-1 hidden gap-1.5 sm:inline-flex">
+            <span className="size-1.5 rounded-full bg-current" />
+            {status.label}
+          </Badge>
+        )}
 
         {/* Sélecteur d'hôte */}
         <DropdownMenu>
@@ -66,7 +75,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {hosts.map((h) => (
-              <DropdownMenuItem key={h.id} onSelect={() => setSelectedHost(h.name)}>
+              <DropdownMenuItem key={h.id} onSelect={() => setSelectedHost(h.id)}>
                 <span
                   className={cn(
                     "size-2 rounded-full",
@@ -77,7 +86,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                   {h.name}
                   <span className="ml-1.5 text-xs text-muted-foreground">{h.kind === "proxmox" ? "PVE" : "Docker"}</span>
                 </span>
-                {selectedHost === h.name && <Check className="text-primary!" />}
+                {selectedHost === h.id && <Check className="text-primary!" />}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>

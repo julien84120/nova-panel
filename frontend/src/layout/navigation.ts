@@ -18,7 +18,8 @@ export interface NavItem {
   to: string
   label: TranslationKey
   icon: LucideIcon
-  badge?: string
+  /** Compteur dynamique affiché à droite (calculé depuis l'API). */
+  count?: "nodes" | "vms" | "lxc" | "docker"
 }
 
 export interface NavSection {
@@ -34,10 +35,10 @@ export const navigation: NavSection[] = [
   {
     title: "nav.infrastructure",
     items: [
-      { to: "/nodes", label: "nav.nodes", icon: Server, badge: "2" },
-      { to: "/vms", label: "nav.vms", icon: Monitor, badge: "14" },
-      { to: "/lxc", label: "nav.lxc", icon: Boxes, badge: "9" },
-      { to: "/docker", label: "nav.docker", icon: Container, badge: "14" },
+      { to: "/nodes", label: "nav.nodes", icon: Server, count: "nodes" },
+      { to: "/vms", label: "nav.vms", icon: Monitor, count: "vms" },
+      { to: "/lxc", label: "nav.lxc", icon: Boxes, count: "lxc" },
+      { to: "/docker", label: "nav.docker", icon: Container, count: "docker" },
       { to: "/storage", label: "nav.storage", icon: HardDrive },
       { to: "/network", label: "nav.network", icon: Network },
     ],

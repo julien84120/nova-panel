@@ -3,6 +3,7 @@ import { ChevronsLeft, ChevronsRight } from "lucide-react"
 
 import { NovaLogo } from "@/components/brand/NovaLogo"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useDashboard } from "@/hooks/DashboardProvider"
 import { useI18n } from "@/i18n/I18nProvider"
 import { cn } from "@/lib/utils"
 import { navigation, settingsItem, type NavItem } from "./navigation"
@@ -16,6 +17,11 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle, onNavigate, className }: SidebarProps) {
   const { t } = useI18n()
+  const { data, error } = useDashboard()
+  const pveNodes = data?.hosts.filter((h) => h.kind === "proxmox") ?? []
+  const pveOnline = pveNodes.filter((h) => h.status !== "offline").length
+  const pveSource = data?.sources.find((s) => s.kind === "proxmox")
+  const healthy = !error && pveSource?.mode !== "error" && pveOnline === pveNodes.length
 
   return (
     <aside
@@ -56,12 +62,17 @@ export function Sidebar({ collapsed, onToggle, onNavigate, className }: SidebarP
           <div className="mb-2 rounded-lg border border-sidebar-border bg-sidebar-accent/50 p-3">
             <div className="flex items-center gap-2 text-xs font-medium text-foreground">
               <span className="relative flex size-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-                <span className="relative inline-flex size-2 rounded-full bg-success" />
+                <span
+                  className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-60", healthy ? "bg-success" : "bg-destructive")}
+                />
+                <span className={cn("relative inline-flex size-2 rounded-full", healthy ? "bg-success" : "bg-destructive")} />
               </span>
-              homelab-cluster
+              <span className="truncate">{pveSource?.mode === "demo" ? "demo-cluster" : (pveSource?.name ?? "Proxmox")}</span>
             </div>
-            <div className="mt-1 text-[11px] text-muted-foreground">3 / 3 · quorum OK</div>
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              {pveOnline} / {pveNodes.length} {t("dash.online").toLowerCase()} · Docker{" "}
+              {data?.hosts.filter((h) => h.kind === "docker" && h.status !== "offline").length ?? 0}
+            </div>
           </div>
         )}
         <SidebarLink item={settingsItem} collapsed={collapsed} onNavigate={onNavigate} />
@@ -82,7 +93,15 @@ export function Sidebar({ collapsed, onToggle, onNavigate, className }: SidebarP
 
 function SidebarLink({ item, collapsed, onNavigate }: { item: NavItem; collapsed: boolean; onNavigate?: () => void }) {
   const { t } = useI18n()
+  const { data } = useDashboard()
   const Icon = item.icon
+  const counts = {
+    nodes: data?.hosts.filter((h) => h.kind === "proxmox").length,
+    vms: data?.guests.filter((g) => g.type === "qemu").length,
+    lxc: data?.guests.filter((g) => g.type === "lxc").length,
+    docker: data?.guests.filter((g) => g.type === "docker").length,
+  }
+  const badge = item.count ? counts[item.count] : undefined
 
   const link = (
     <NavLink
@@ -104,9 +123,9 @@ function SidebarLink({ item, collapsed, onNavigate }: { item: NavItem; collapsed
           {isActive && <span className="absolute top-1.5 bottom-1.5 left-0 w-[3px] rounded-r-full bg-primary" />}
           <Icon className={cn("size-[18px] shrink-0", isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground")} />
           {!collapsed && <span className="flex-1 truncate">{t(item.label)}</span>}
-          {!collapsed && item.badge && (
+          {!collapsed && badge !== undefined && (
             <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
-              {item.badge}
+              {badge}
             </span>
           )}
         </>

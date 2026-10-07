@@ -1,0 +1,152 @@
+"""Collecteur central : interroge périodiquement chaque source et garde le dernier instantané en mémoire.
+
+Les routes de l'API lisent uniquement cet instantané → réponses instantanées, et Proxmox / l'hôte SSH
+ne sont jamais sollicités plus d'une fois par intervalle, quel que soit le nombre d'onglets ouverts.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import threading
+import time
+from collections import deque
+
+from app.config import Settings
+from app.schemas import Dashboard, Guest, Host, SourceStatus, Summary, Task, UsagePoint
+from app.services import demo
+from app.services.docker_host import DockerCollector
+from app.services.proxmox import ProxmoxCollector
+
+log = logging.getLogger("novapanel.collector")
+HISTORY_SECONDS = 3600
+
+
+class Collector:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.proxmox = ProxmoxCollector(settings) if settings.proxmox_enabled else None
+        self.docker = DockerCollector(settings) if settings.docker_enabled else None
+        self.history: deque[UsagePoint] = deque()
+        self.snapshot: Dashboard | None = None
+        self._lock = threading.Lock()
+        self._task: asyncio.Task | None = None
+
+    # ── cycle de vie ─────────────────────────────────────────
+    async def start(self) -> None:
+        await asyncio.to_thread(self._seed_history)
+        await asyncio.to_thread(self.refresh)
+        self._task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        if self._task:
+            self._task.cancel()
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.settings.nova_poll_interval)
+            try:
+                await asyncio.to_thread(self.refresh)
+            except Exception:  # noqa: BLE001 — le collecteur ne doit jamais s'arrêter
+                log.exception("refresh failed")
+
+    def _seed_history(self) -> None:
+        points: list[UsagePoint] = []
+        if self.proxmox:
+            try:
+                points = self.proxmox.history()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Proxmox RRD history unavailable: %s", exc)
+        elif not self.docker:
+            points = demo.demo_history()
+        self.history.extend(points)
+
+    # ── collecte ─────────────────────────────────────────────
+    def refresh(self) -> Dashboard:
+        with self._lock:
+            hosts: list[Host] = []
+            guests: list[Guest] = []
+            tasks: list[Task] = []
+            sources: list[SourceStatus] = []
+            storage_used = storage_total = 0
+
+            if self.proxmox:
+                try:
+                    d = self.proxmox.collect()
+                    hosts += d.hosts
+                    guests += d.guests
+                    tasks += d.tasks
+                    storage_used, storage_total = d.storage_used, d.storage_total
+                    sources.append(SourceStatus(name=self.settings.proxmox_host, kind="proxmox", mode="live"))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Proxmox: %s", exc)
+                    sources.append(
+                        SourceStatus(name=self.settings.proxmox_host, kind="proxmox", mode="error", detail=_short(exc))
+                    )
+            else:
+                h, g, t, su, st = demo.demo_proxmox()
+                hosts += h
+                guests += g
+                tasks += t
+                storage_used, storage_total = su, st
+                sources.append(SourceStatus(name="Proxmox", kind="proxmox", mode="demo"))
+
+            name = self.settings.docker_display_name
+            if self.docker:
+                try:
+                    d = self.docker.collect()
+                    if d.host:
+                        hosts.append(d.host)
+                        storage_used += d.host.disk_used
+                        storage_total += d.host.disk_total
+                    guests += d.guests
+                    sources.append(SourceStatus(name=name, kind="docker", mode="live"))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Docker/SSH: %s", exc)
+                    sources.append(SourceStatus(name=name, kind="docker", mode="error", detail=_short(exc)))
+            else:
+                h, g = demo.demo_docker(name)
+                hosts.append(h)
+                guests += g
+                storage_used += h.disk_used
+                storage_total += h.disk_total
+                sources.append(SourceStatus(name=name, kind="docker", mode="demo"))
+
+            online = [h for h in hosts if h.status != "offline"]
+            cores = sum(h.cores for h in online)
+            cpu = round(sum(h.cpu * h.cores for h in online) / cores, 1) if cores else 0.0
+            mem_used = sum(h.mem_used for h in online)
+            mem_total = sum(h.mem_total for h in online)
+            summary = Summary(
+                cpu=cpu,
+                cores=cores,
+                mem_used=mem_used,
+                mem_total=mem_total,
+                disk_used=storage_used,
+                disk_total=storage_total,
+                guests_total=len(guests),
+                guests_running=sum(g.status == "running" for g in guests),
+            )
+
+            now = int(time.time())
+            if mem_total:
+                self.history.append(UsagePoint(t=now, cpu=cpu, memory=round(mem_used / mem_total * 100, 1)))
+            while self.history and self.history[0].t < now - HISTORY_SECONDS:
+                self.history.popleft()
+
+            self.snapshot = Dashboard(
+                generated_at=now,
+                demo=any(s.mode == "demo" for s in sources),
+                sources=sources,
+                summary=summary,
+                hosts=hosts,
+                guests=sorted(guests, key=lambda g: g.cpu, reverse=True),
+                tasks=sorted(tasks, key=lambda t: t.started_at, reverse=True)[:8],
+                history=list(self.history),
+            )
+            return self.snapshot
+
+
+def _short(exc: Exception) -> str:
+    msg = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+    return msg[:200]

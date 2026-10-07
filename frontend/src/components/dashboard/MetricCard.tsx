@@ -54,7 +54,7 @@ export function MetricCard({ label, value, unit, detail, icon: Icon, percent, tr
               title={trend.label}
             >
               {trend.value >= 0 ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
-              {Math.abs(trend.value)}%
+              {Math.abs(trend.value)} pt
             </span>
           )}
         </div>

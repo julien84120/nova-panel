@@ -24,7 +24,7 @@ export function NovaLogo({ collapsed = false }: { collapsed?: boolean }) {
           <div className="text-[15px] font-semibold tracking-tight text-foreground">
             Nova<span className="text-primary">Panel</span>
           </div>
-          <div className="text-[11px] text-muted-foreground">v0.1.0 · open-source</div>
+          <div className="text-[11px] text-muted-foreground">v0.2.0 · open-source</div>
         </div>
       )}
     </div>
