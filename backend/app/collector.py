@@ -31,6 +31,8 @@ class Collector:
         self.snapshot: Dashboard | None = None
         self._lock = threading.Lock()
         self._task: asyncio.Task | None = None
+        self._history_seeded = False
+        self._last_seed_attempt = 0.0
 
     # ── cycle de vie ─────────────────────────────────────────
     async def start(self) -> None:
@@ -46,20 +48,36 @@ class Collector:
         while True:
             await asyncio.sleep(self.settings.nova_poll_interval)
             try:
+                # Historique RRD indisponible au démarrage (droits, réseau) → nouvel essai toutes les 5 min
+                if self.proxmox and not self._history_seeded and time.time() - self._last_seed_attempt > 300:
+                    await asyncio.to_thread(self._seed_history)
                 await asyncio.to_thread(self.refresh)
             except Exception:  # noqa: BLE001 — le collecteur ne doit jamais s'arrêter
                 log.exception("refresh failed")
 
     def _seed_history(self) -> None:
+        self._last_seed_attempt = time.time()
         points: list[UsagePoint] = []
         if self.proxmox:
             try:
                 points = self.proxmox.history()
+                self._history_seeded = True
             except Exception as exc:  # noqa: BLE001
-                log.warning("Proxmox RRD history unavailable: %s", exc)
+                hint = ""
+                if "403" in str(exc):
+                    hint = (
+                        " — le jeton n'a pas Sys.Audit sur ce nœud. Avec la séparation des privilèges, "
+                        "l'utilisateur ET le jeton doivent avoir le rôle PVEAuditor sur / (voir README)."
+                    )
+                log.warning("Proxmox RRD history unavailable: %s%s", exc, hint)
+                return
         elif not self.docker:
             points = demo.demo_history()
-        self.history.extend(points)
+        with self._lock:
+            # Fusionne avec les points déjà collectés en direct, sans doublons
+            merged = {p.t: p for p in [*points, *self.history]}
+            self.history.clear()
+            self.history.extend(merged[t] for t in sorted(merged))
 
     # ── collecte ─────────────────────────────────────────────
     def refresh(self) -> Dashboard:

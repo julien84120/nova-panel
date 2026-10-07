@@ -54,12 +54,22 @@ Dans l'interface Proxmox :
 2. **Datacenter → Permissions → API Tokens → Add** : utilisateur `novapanel@pve`, Token ID `novapanel`, laissez **Privilege Separation** coché. Copiez le secret (affiché une seule fois).
 3. **Datacenter → Permissions → Add → API Token Permission** : chemin `/`, token `novapanel@pve!novapanel`, rôle **`PVEAuditor`**, *Propagate* coché.
 
+4. **Datacenter → Permissions → Add → User Permission** : chemin `/`, utilisateur `novapanel@pve`, rôle **`PVEAuditor`**, *Propagate* coché.
+
+> Avec *Privilege Separation*, les droits effectifs du jeton sont l'**intersection** des droits du jeton
+> et de ceux de son utilisateur : les **deux** doivent avoir `PVEAuditor` sur `/`, sinon Proxmox répond
+> `403 Permission check failed (/nodes/<nœud>, Sys.Audit)`.
+
 Ou en ligne de commande sur le nœud :
 
 ```bash
 pveum user add novapanel@pve --comment "NovaPanel (lecture seule)"
 pveum user token add novapanel@pve novapanel --privsep 1      # affiche le secret
+pveum acl modify / --users novapanel@pve --roles PVEAuditor
 pveum acl modify / --tokens 'novapanel@pve!novapanel' --roles PVEAuditor
+
+# Vérification : Sys.Audit doit apparaître pour le jeton
+pveum user token permissions novapanel@pve novapanel --path /nodes
 ```
 
 Puis dans `backend/.env` :
