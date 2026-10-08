@@ -1,3 +1,5 @@
+![Vues de profil](https://komarev.com/ghpvc/?username=julien84120-delta&label=Vues+du+projet&color=blue&style=flat)
+
 <p align="center">
   <img src="frontend/public/favicon.svg" width="64" alt="NovaPanel" />
 </p>
