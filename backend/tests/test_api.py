@@ -42,7 +42,7 @@ def test_full_auth_flow(client):
     r = _setup(client)
     cookie = r.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=strict" in cookie
-    assert client.get("/api/auth/status").json()["user"] == {"username": "admin"}
+    assert client.get("/api/auth/status").json()["user"] == {"username": "admin", "role": "admin"}
     d = client.get("/api/dashboard").json()
     assert d["demo"] is True and len(d["hosts"]) == 3 and len(d["history"]) > 10
     assert "sources" in client.get("/api/health").json()

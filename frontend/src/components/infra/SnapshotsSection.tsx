@@ -16,8 +16,8 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useDashboard } from "@/hooks/DashboardProvider"
 import { useActions } from "@/hooks/useActions"
+import { usePermissions } from "@/hooks/usePermissions"
 import { useI18n } from "@/i18n/I18nProvider"
 import { api, type Guest, type Snapshot } from "@/lib/api"
 import { timeAgo } from "@/lib/utils"
@@ -27,13 +27,12 @@ const NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{1,39}$/
 /** Liste + actions des snapshots d'un invité (panneau de détail). */
 export function SnapshotsSection({ guest }: { guest: Guest }) {
   const { t, lang } = useI18n()
-  const { data } = useDashboard()
   const [snaps, setSnaps] = useState<Snapshot[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [rollback, setRollback] = useState<Snapshot | null>(null)
   const [del, setDel] = useState<Snapshot | null>(null)
-  const enabled = data?.actions_enabled ?? true
+  const { canOperate: enabled } = usePermissions()
   const type = guest.type as "qemu" | "lxc"
 
   const load = useCallback(

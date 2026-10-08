@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useDashboard } from "@/hooks/DashboardProvider"
 import { usePolling } from "@/hooks/usePolling"
 import { useQueryParam } from "@/hooks/useQueryParam"
+import { usePermissions } from "@/hooks/usePermissions"
 import { useI18n } from "@/i18n/I18nProvider"
 import { api, type Guest, type GuestSnapshot } from "@/lib/api"
 import { cn, timeAgo } from "@/lib/utils"
@@ -26,7 +27,7 @@ export function SnapshotsPage() {
   const [rollback, setRollback] = useState<GuestSnapshot | null>(null)
   const [del, setDel] = useState<GuestSnapshot | null>(null)
   const now = dash?.generated_at ?? 0
-  const enabled = dash?.actions_enabled ?? true
+  const { canOperate: enabled } = usePermissions()
   const maxAge = 30 * DAY
 
   const hostName = view && view.hosts.length === 1 ? view.hosts[0].name : null
@@ -39,6 +40,7 @@ export function SnapshotsPage() {
   )
   const old = all.filter((s) => now - s.snaptime > maxAge).length
   const withRam = all.filter((s) => s.vmstate).length
+  const nGuests = new Set(all.map((s) => s.guest_id)).size
   const guestOf = (s: GuestSnapshot | null): Guest | null =>
     s ? (view?.guests.find((g) => g.type === s.guest_type && g.id === s.guest_id && g.host === s.node) ?? null) : null
 
@@ -47,7 +49,7 @@ export function SnapshotsPage() {
       <PageHeader title={t("nav.snapshots")} subtitle={t("snap.subtitle")} />
       {error && <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</div>}
       <div className="grid gap-4 sm:grid-cols-3">
-        <MetricCard label={t("snap.total")} value={`${all.length}`} detail={`${new Set(all.map((s) => s.guest_id)).size} ${t("snap.guests")}`} icon={Camera} color="var(--chart-1)" />
+        <MetricCard label={t("snap.total")} value={`${all.length}`} detail={`${nGuests} ${t(nGuests === 1 ? "snap.guest" : "snap.guests")}`} icon={Camera} color="var(--chart-1)" />
         <MetricCard
           label={t("snap.old")}
           value={`${old}`}

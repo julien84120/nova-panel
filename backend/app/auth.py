@@ -31,10 +31,18 @@ _hasher = PasswordHasher()  # Argon2id, paramètres recommandés par argon2-cffi
 _DUMMY_HASH = _hasher.hash(secrets.token_urlsafe(16))
 
 
+ROLES = ("viewer", "operator", "admin")
+ROLE_RANK = {r: i for i, r in enumerate(ROLES)}
+
+
 @dataclass
 class User:
     id: int
     username: str
+    role: str = "admin"
+
+    def has(self, role: str) -> bool:
+        return ROLE_RANK.get(self.role, -1) >= ROLE_RANK[role]
 
 
 class AuthError(Exception):
@@ -116,17 +124,19 @@ class AuthService:
     def setup_required(self) -> bool:
         return self.user_count() == 0
 
-    def create_user(self, username: str, password: str) -> User:
+    def create_user(self, username: str, password: str, role: str = "admin") -> User:
         username = validate_username(username)
         validate_password(password)
+        if role not in ROLES:
+            raise AuthError("invalid_role")
         now = int(time.time())
         try:
             with self.db.connect() as c:
                 cur = c.execute(
-                    "INSERT INTO users (username, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                    (username, _hasher.hash(password), now, now),
+                    "INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (username, _hasher.hash(password), role, now, now),
                 )
-                return User(id=cur.lastrowid, username=username)
+                return User(id=cur.lastrowid, username=username, role=role)
         except Exception as exc:
             if "UNIQUE" in str(exc):
                 raise AuthError("username_taken", 409) from exc
@@ -147,6 +157,78 @@ class AuthService:
     def list_users(self) -> list[str]:
         with self.db.connect() as c:
             return [r["username"] for r in c.execute("SELECT username FROM users ORDER BY id")]
+
+    def users(self) -> list[dict]:
+        with self.db.connect() as c:
+            rows = c.execute(
+                "SELECT u.id, u.username, u.role, u.disabled, u.created_at, u.last_login,"
+                " (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > ?) AS sessions"
+                " FROM users u ORDER BY u.id",
+                (int(time.time()),),
+            ).fetchall()
+        return [{**dict(r), "disabled": bool(r["disabled"])} for r in rows]
+
+    def _get(self, c, user_id: int):
+        row = c.execute("SELECT id, username, role, disabled FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            raise AuthError("user_not_found", 404)
+        return row
+
+    def _admins_left(self, c, excluding: int) -> int:
+        return c.execute(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0 AND id != ?", (excluding,)
+        ).fetchone()[0]
+
+    def update_user(
+        self,
+        actor: User,
+        user_id: int,
+        role: str | None = None,
+        disabled: bool | None = None,
+        password: str | None = None,
+    ) -> dict:
+        """Modification par un administrateur. Garde-fous : jamais sur soi-même (rôle, désactivation),
+        et il reste toujours au moins un administrateur actif."""
+        if role is not None and role not in ROLES:
+            raise AuthError("invalid_role")
+        if password is not None:
+            validate_password(password)
+        with self.db.connect() as c:
+            row = self._get(c, user_id)
+            demote = role is not None and role != "admin"
+            if user_id == actor.id and (demote or disabled):
+                raise AuthError("cannot_modify_self", 409)
+            if (
+                row["role"] == "admin"
+                and not row["disabled"]
+                and (demote or disabled)
+                and not self._admins_left(c, user_id)
+            ):
+                raise AuthError("last_admin", 409)
+            now = int(time.time())
+            if role is not None:
+                c.execute("UPDATE users SET role = ?, updated_at = ? WHERE id = ?", (role, now, user_id))
+            if disabled is not None:
+                c.execute("UPDATE users SET disabled = ?, updated_at = ? WHERE id = ?", (int(disabled), now, user_id))
+            if password is not None:
+                c.execute(
+                    "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+                    (_hasher.hash(password), now, user_id),
+                )
+            # Toute modification de droits ou de mot de passe ferme les sessions ouvertes de ce compte
+            if role is not None and role != row["role"] or disabled or password is not None:
+                c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        return next(u for u in self.users() if u["id"] == user_id)
+
+    def delete_user(self, actor: User, user_id: int) -> str:
+        with self.db.connect() as c:
+            row = self._get(c, user_id)
+            if user_id == actor.id:
+                raise AuthError("cannot_modify_self", 409)
+            if row["role"] == "admin" and not row["disabled"] and not self._admins_left(c, user_id):
+                raise AuthError("last_admin", 409)
+            c.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return row["username"]
 
     # ── premier lancement ────────────────────────────────────
     def setup_token(self) -> str:
@@ -171,7 +253,9 @@ class AuthService:
     def authenticate(self, username: str, password: str, ip: str) -> User:
         self.limiter.check(ip, username)
         with self.db.connect() as c:
-            row = c.execute("SELECT id, username, password_hash FROM users WHERE username = ?", (username,)).fetchone()
+            row = c.execute(
+                "SELECT id, username, password_hash, role, disabled FROM users WHERE username = ?", (username,)
+            ).fetchone()
         try:
             _hasher.verify(row["password_hash"] if row else _DUMMY_HASH, password)
             if not row:
@@ -181,10 +265,14 @@ class AuthService:
             log.warning("Échec de connexion pour « %s » depuis %s", username, ip)
             raise AuthError("invalid_credentials", 401) from None
         self.limiter.success(ip, username)
-        if _hasher.check_needs_rehash(row["password_hash"]):
-            with self.db.connect() as c:
+        if row["disabled"]:
+            # Mot de passe correct mais compte désactivé : message explicite (le mot de passe est déjà prouvé)
+            raise AuthError("account_disabled", 403)
+        with self.db.connect() as c:
+            c.execute("UPDATE users SET last_login = ? WHERE id = ?", (int(time.time()), row["id"]))
+            if _hasher.check_needs_rehash(row["password_hash"]):
                 c.execute("UPDATE users SET password_hash = ? WHERE id = ?", (_hasher.hash(password), row["id"]))
-        return User(id=row["id"], username=row["username"])
+        return User(id=row["id"], username=row["username"], role=row["role"])
 
     def create_session(self, user: User, ip: str, user_agent: str) -> str:
         token = secrets.token_urlsafe(32)
@@ -214,8 +302,8 @@ class AuthService:
         th = _token_hash(token)
         with self.db.connect() as c:
             row = c.execute(
-                "SELECT s.last_seen, s.expires_at, u.id, u.username FROM sessions s"
-                " JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?",
+                "SELECT s.last_seen, s.expires_at, u.id, u.username, u.role FROM sessions s"
+                " JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND u.disabled = 0",
                 (th,),
             ).fetchone()
             if not row:
@@ -225,7 +313,7 @@ class AuthService:
                 return None
             if now - row["last_seen"] > 60:  # limite les écritures
                 c.execute("UPDATE sessions SET last_seen = ? WHERE token_hash = ?", (now, th))
-        return User(id=row["id"], username=row["username"])
+        return User(id=row["id"], username=row["username"], role=row["role"])
 
     def revoke(self, token: str | None) -> None:
         if token:

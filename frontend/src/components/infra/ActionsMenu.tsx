@@ -22,8 +22,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useDashboard } from "@/hooks/DashboardProvider"
 import { useActions } from "@/hooks/useActions"
+import { usePermissions } from "@/hooks/usePermissions"
 import { useI18n } from "@/i18n/I18nProvider"
 import type { TranslationKey } from "@/i18n/translations"
 import { availableActions, type ActionDef } from "@/lib/actions"
@@ -31,12 +31,11 @@ import type { ContainerAction, Guest, GuestAction } from "@/lib/api"
 
 export function ActionsMenu({ guest, onLogs, align = "end" }: { guest: Guest; onLogs?: () => void; align?: "start" | "end" }) {
   const { t } = useI18n()
-  const { data } = useDashboard()
   const { guestAction, containerAction } = useActions()
   const [pending, setPending] = useState<ActionDef | null>(null)
   const [backupOpen, setBackupOpen] = useState(false)
   const [snapOpen, setSnapOpen] = useState(false)
-  const enabled = data?.actions_enabled ?? true
+  const { canOperate: enabled, readOnly } = usePermissions()
   const actions = availableActions(guest)
 
   const run = (def: ActionDef) => {
@@ -66,7 +65,7 @@ export function ActionsMenu({ guest, onLogs, align = "end" }: { guest: Guest; on
               {t(`act.${def.action}` as TranslationKey)}
             </DropdownMenuItem>
           ))}
-          {!enabled && <div className="px-2 py-1.5 text-xs text-muted-foreground">{t("act.disabled")}</div>}
+          {!enabled && <div className="px-2 py-1.5 text-xs text-muted-foreground">{t(readOnly ? "auth.err.forbidden" : "act.disabled")}</div>}
           {guest.type !== "docker" && (
             <>
               <DropdownMenuSeparator />
@@ -123,9 +122,8 @@ export function ActionsMenu({ guest, onLogs, align = "end" }: { guest: Guest; on
 /** Bouton principal unique (démarrer / éteindre), utilisé dans les panneaux de détail. */
 export function QuickActions({ guest }: { guest: Guest }) {
   const { t } = useI18n()
-  const { data } = useDashboard()
   const { guestAction, containerAction } = useActions()
-  const enabled = data?.actions_enabled ?? true
+  const { canOperate: enabled } = usePermissions()
   const primary = availableActions(guest).find((a) => !a.confirm)
   if (!primary) return null
   return (

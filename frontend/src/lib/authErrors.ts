@@ -12,6 +12,10 @@ export function authErrorMessage(e: unknown, t: (k: TranslationKey) => string): 
       invalid_username: "auth.err.invalidUsername",
       username_taken: "auth.err.usernameTaken",
       setup_done: "auth.err.setupDone",
+      account_disabled: "auth.err.disabled",
+      cannot_modify_self: "auth.err.self",
+      last_admin: "auth.err.lastAdmin",
+      forbidden_role: "auth.err.forbidden",
     }
     if (e.detail === "too_many_attempts") {
       return t("auth.err.tooMany").replace("{s}", String(e.retryAfter ?? 60))

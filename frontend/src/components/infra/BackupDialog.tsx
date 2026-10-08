@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label"
 import { useDashboard } from "@/hooks/DashboardProvider"
 import { useActions } from "@/hooks/useActions"
+import { usePermissions } from "@/hooks/usePermissions"
 import { useI18n } from "@/i18n/I18nProvider"
 import type { TranslationKey } from "@/i18n/translations"
 import type { Guest } from "@/lib/api"
@@ -14,6 +15,7 @@ import { cn, formatBytes } from "@/lib/utils"
 type Mode = "snapshot" | "suspend" | "stop"
 
 export function BackupDialog({ guest, onClose }: { guest: Guest | null; onClose: () => void }) {
+  const { canOperate } = usePermissions()
   const { t } = useI18n()
   const { data } = useDashboard()
   const { backupGuest } = useActions()
@@ -88,7 +90,7 @@ export function BackupDialog({ guest, onClose }: { guest: Guest | null; onClose:
           <Button variant="outline" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button onClick={submit} disabled={!selected || !(data?.actions_enabled ?? true)}>
+          <Button onClick={submit} disabled={!selected || !canOperate}>
             <Archive />
             {t("act.backup")}
           </Button>

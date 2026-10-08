@@ -23,6 +23,8 @@ import { timeAgo } from "@/lib/utils"
 import { useTheme } from "@/hooks/useTheme"
 import { useI18n } from "@/i18n/I18nProvider"
 import { cn } from "@/lib/utils"
+import { usePermissions } from "@/hooks/usePermissions"
+import type { TranslationKey } from "@/i18n/translations"
 
 export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { t, lang, setLang } = useI18n()
@@ -32,6 +34,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const navigate = useNavigate()
   const username = auth?.user?.username ?? ""
   const initials = username.slice(0, 2).toUpperCase()
+  const { role, readOnly } = usePermissions()
   const hosts = data?.hosts ?? []
 
   const hostLabel = selectedHost === "all" ? t("header.allHosts") : (hosts.find((h) => h.id === selectedHost)?.name ?? "…")
@@ -123,6 +126,12 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           {theme === "dark" ? <Sun /> : <Moon />}
         </Button>
 
+        {readOnly && (
+          <Badge variant="secondary" className="hidden sm:inline-flex">
+            {t("header.readOnly")}
+          </Badge>
+        )}
+
         {/* Notifications */}
         <AlertsBell />
 
@@ -138,7 +147,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuLabel className="text-foreground">
               <div className="text-sm font-medium">{username}</div>
-              <div className="text-xs font-normal text-muted-foreground">{t("header.admin")}</div>
+              <div className="text-xs font-normal text-muted-foreground">{t(`role.${role}` as TranslationKey)}</div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => navigate("/settings")}>
@@ -159,6 +168,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
 function AlertsBell() {
   const { t, lang } = useI18n()
   const { active, unacked, acknowledge } = useAlerts()
+  const { canOperate } = usePermissions()
   const navigate = useNavigate()
   const critical = active.some((a) => !a.acknowledged && a.severity === "critical")
   const list = [...active].sort((a, b) => Number(a.acknowledged) - Number(b.acknowledged) || b.started_at - a.started_at).slice(0, 6)
@@ -196,7 +206,7 @@ function AlertsBell() {
                 <div className="line-clamp-2 text-xs text-muted-foreground">{a.detail}</div>
                 <div className="mt-0.5 text-[11px] text-muted-foreground">{timeAgo(a.started_at, lang)}</div>
               </div>
-              {!a.acknowledged && (
+              {!a.acknowledged && canOperate && (
                 <button
                   className="self-start rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
                   title={t("alerts.ack")}

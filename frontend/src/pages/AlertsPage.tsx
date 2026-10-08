@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useAlerts } from "@/hooks/AlertsProvider"
+import { usePermissions } from "@/hooks/usePermissions"
 import { usePolling } from "@/hooks/usePolling"
 import { useI18n } from "@/i18n/I18nProvider"
 import { api, type Alert } from "@/lib/api"
@@ -20,6 +21,7 @@ export function AlertsPage() {
   const [tab, setTab] = useState<"active" | "history">("active")
   const history = usePolling(() => api.alerts("all"), 30_000, [tab, active.length])
   const [busy, setBusy] = useState(false)
+  const { canOperate, isAdmin } = usePermissions()
 
   const rows: Alert[] = tab === "active" ? active : (history.data ?? []).filter((a) => a.resolved_at)
 
@@ -37,16 +39,18 @@ export function AlertsPage() {
   return (
     <div className="space-y-6">
       <PageHeader title={t("nav.alerts")} subtitle={t("alerts.subtitle")}>
-        <Button variant="outline" size="sm" className="bg-card/60" onClick={evaluate} disabled={busy}>
+        <Button variant="outline" size="sm" className="bg-card/60" onClick={evaluate} disabled={busy || !canOperate}>
           <RefreshCw className={cn(busy && "animate-spin")} />
           {t("alerts.evaluate")}
         </Button>
-        <Button variant="outline" size="sm" className="bg-card/60" asChild>
-          <Link to="/settings?tab=alerts">
-            <Settings2 />
-            {t("alerts.configure")}
-          </Link>
-        </Button>
+        {isAdmin && (
+          <Button variant="outline" size="sm" className="bg-card/60" asChild>
+            <Link to="/settings?tab=alerts">
+              <Settings2 />
+              {t("alerts.configure")}
+            </Link>
+          </Button>
+        )}
       </PageHeader>
 
       <div className="flex rounded-lg border bg-card/60 p-0.5 text-sm w-fit">
@@ -107,7 +111,7 @@ export function AlertsPage() {
                       <Check /> {a.ack_by}
                     </Badge>
                   ) : (
-                    tab === "active" && (
+                    tab === "active" && canOperate && (
                       <Button size="sm" variant="ghost" onClick={() => acknowledge(a.id)}>
                         <Check />
                         {t("alerts.ack")}

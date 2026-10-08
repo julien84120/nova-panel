@@ -343,10 +343,22 @@ export interface DashboardData {
   actions_enabled: boolean
 }
 
+export type Role = "viewer" | "operator" | "admin"
+
+export interface UserAccount {
+  id: number
+  username: string
+  role: Role
+  disabled: boolean
+  created_at: number
+  last_login: number | null
+  sessions: number
+}
+
 export interface AuthStatus {
   setup_required: boolean
   authenticated: boolean
-  user: { username: string } | null
+  user: { username: string; role: Role } | null
   min_password_length: number
 }
 
@@ -447,6 +459,14 @@ export const api = {
     post<{ ok: boolean }>(`/api/docker/containers/${encodeURIComponent(id)}/${action}`),
   containerLogs: (id: string, tail = 200) =>
     request<{ id: string; name: string; logs: string }>(`/api/docker/containers/${encodeURIComponent(id)}/logs?tail=${tail}`),
+  users: {
+    list: () => request<UserAccount[]>("/api/users"),
+    create: (username: string, password: string, role: Role) =>
+      post<UserAccount>("/api/users", { username, password, role }),
+    update: (id: number, patch: { role?: Role; disabled?: boolean; password?: string }) =>
+      request<UserAccount>(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+    remove: (id: number) => request<{ ok: boolean }>(`/api/users/${id}`, { method: "DELETE" }),
+  },
   auth: {
     status: () => request<AuthStatus>("/api/auth/status"),
     login: (username: string, password: string) => post<{ username: string }>("/api/auth/login", { username, password }),

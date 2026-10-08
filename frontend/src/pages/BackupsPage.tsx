@@ -10,6 +10,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useDashboard } from "@/hooks/DashboardProvider"
 import { usePolling } from "@/hooks/usePolling"
+import { usePermissions } from "@/hooks/usePermissions"
 import { useI18n } from "@/i18n/I18nProvider"
 import { api, type BackupFile, type Guest } from "@/lib/api"
 import { cn, formatBytes, splitBytes, timeAgo } from "@/lib/utils"
@@ -17,6 +18,7 @@ import { cn, formatBytes, splitBytes, timeAgo } from "@/lib/utils"
 const DAY = 86400
 
 export function BackupsPage() {
+  const { canOperate } = usePermissions()
   const { t, lang } = useI18n()
   const { view, data: dash } = useDashboard()
   const { data, error } = usePolling(api.backups, 30_000, [dash?.tasks[0]?.id])
@@ -145,7 +147,7 @@ export function BackupsPage() {
                       {[...new Set(list.map((f) => f.storage))].join(", ") || "—"}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" onClick={() => setBackupFor(g)} disabled={!(dash?.actions_enabled ?? true)}>
+                      <Button variant="outline" size="sm" onClick={() => setBackupFor(g)} disabled={!canOperate}>
                         <Archive />
                         {t("act.backup")}
                       </Button>

@@ -17,6 +17,7 @@ from app.db import Database
 from app.metrics import MetricsStore
 from app.routes.alerts import router as alerts_router
 from app.routes.infra import router as infra_router
+from app.routes.users import router as users_router
 from app.schemas import Dashboard, Guest, Host
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -73,6 +74,17 @@ CSP = (
 )
 
 
+def required_role(method: str, path: str) -> str | None:
+    """Contrôle d'accès central, refus par défaut : toute écriture exige au moins « operator »."""
+    if path.startswith("/api/auth/"):
+        return None  # déconnexion, changement de son propre mot de passe
+    if path.startswith(("/api/users", "/api/alerts/config", "/api/alerts/channels")):
+        return "admin"
+    if method in SAFE_METHODS:
+        return "viewer"
+    return "operator"
+
+
 @app.middleware("http")
 async def security(request: Request, call_next):
     path = request.url.path
@@ -84,6 +96,9 @@ async def security(request: Request, call_next):
         request.state.user = user
         if user is None and path not in PUBLIC_API:
             return JSONResponse({"detail": "not_authenticated"}, status_code=401)
+        need = required_role(request.method, path)
+        if user is not None and need and not user.has(need):
+            return JSONResponse({"detail": "forbidden_role", "required": need}, status_code=403)
     response = await call_next(request)
     h = response.headers
     h.setdefault("X-Content-Type-Options", "nosniff")
@@ -150,7 +165,7 @@ def auth_status(request: Request):
     return {
         "setup_required": request.app.state.auth.setup_required(),
         "authenticated": user is not None,
-        "user": {"username": user.username} if user else None,
+        "user": {"username": user.username, "role": user.role} if user else None,
         "min_password_length": MIN_PASSWORD_LENGTH,
     }
 
@@ -237,6 +252,7 @@ def guests(request: Request, type: str | None = None, host: str | None = None):
 
 app.include_router(infra_router)
 app.include_router(alerts_router)
+app.include_router(users_router)
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)

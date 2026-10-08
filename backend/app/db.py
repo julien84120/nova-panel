@@ -45,7 +45,16 @@ class Database:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
-        self._conn().executescript(SCHEMA)
+        conn = self._conn()
+        conn.executescript(SCHEMA)
+        # Migrations légères (colonnes ajoutées après coup) — les comptes existants restent administrateurs
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+        if "role" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'")
+        if "disabled" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
+        if "last_login" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN last_login INTEGER")
         try:
             path.chmod(0o600)
         except OSError:

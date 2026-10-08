@@ -13,6 +13,8 @@ import { useI18n } from "@/i18n/I18nProvider"
 import { api } from "@/lib/api"
 import { authErrorMessage } from "@/lib/authErrors"
 import { NotificationSettings } from "@/components/alerts/NotificationSettings"
+import { UsersSettings } from "@/components/users/UsersSettings"
+import { usePermissions } from "@/hooks/usePermissions"
 import { useQueryParam } from "@/hooks/useQueryParam"
 import { cn } from "@/lib/utils"
 
@@ -28,7 +30,9 @@ export function SettingsPage() {
   const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
   const [tab, setTab] = useQueryParam("tab")
-  const current_tab = tab === "alerts" ? "alerts" : "account"
+  const { isAdmin } = usePermissions()
+  const tabs = isAdmin ? (["account", "users", "alerts"] as const) : (["account"] as const)
+  const currentTab = (tabs as readonly string[]).includes(tab) ? tab : "account"
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -58,22 +62,24 @@ export function SettingsPage() {
       </div>
 
       <div className="flex w-fit rounded-lg border bg-card/60 p-0.5 text-sm">
-        {(["account", "alerts"] as const).map((k) => (
+        {tabs.map((k) => (
           <button
             key={k}
             onClick={() => setTab(k === "account" ? "" : k)}
             className={cn(
               "rounded-md px-3 py-1 font-medium transition-colors",
-              current_tab === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              currentTab === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
             )}
           >
-            {t(k === "account" ? "settings.tabAccount" : "settings.tabAlerts")}
+            {t(k === "account" ? "settings.tabAccount" : k === "users" ? "settings.tabUsers" : "settings.tabAlerts")}
           </button>
         ))}
       </div>
 
-      {current_tab === "alerts" ? (
+      {currentTab === "alerts" ? (
         <NotificationSettings />
+      ) : currentTab === "users" ? (
+        <UsersSettings />
       ) : (
       <div className="grid gap-4 xl:grid-cols-2">
         <Card>

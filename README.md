@@ -23,6 +23,7 @@
 | 4 | Pages Nœuds, VMs, LXC, Docker (logs), Stockage, Tâches + journal ; actions démarrer/éteindre/redémarrer/forcer l'arrêt… avec confirmation ; recherche globale ⌘K | ✅ |
 | 5 | Historique par hôte persistant (1 h / 24 h / 7 j), graphique « une courbe par machine » ; pages Réseau (interfaces, ponts, VLAN, réseaux Docker) et Sauvegardes (tâches planifiées, couverture, archives, sauvegarde immédiate) | ✅ |
 | 6 | Snapshots (créer avec ou sans RAM, restaurer avec confirmation tapée, supprimer, vue globale des vieux snapshots) ; alertes (10 règles réglables) et notifications e-mail, Discord, Telegram, ntfy, webhook | ✅ |
+| 7 | Utilisateurs et rôles : Lecteur (lecture seule), Opérateur (actions), Administrateur (comptes, alertes) ; désactivation, réinitialisation de mot de passe, garde-fous (dernier admin, soi-même) | ✅ |
 
 ## Stack
 
@@ -220,6 +221,19 @@ DOCKER_SSH_HOST=nova-oracle
 DOCKER_DISPLAY_NAME=oracle-docker
 ```
 
+## Utilisateurs et rôles
+
+| Rôle | Peut |
+| --- | --- |
+| **Lecteur** | tout consulter (tableaux de bord, VMs, Docker, sauvegardes, alertes, journal) |
+| **Opérateur** | + démarrer / arrêter, sauvegarder, snapshots, acquitter les alertes |
+| **Administrateur** | + gérer les comptes, les règles d'alerte et les canaux de notification |
+
+Gestion dans **Paramètres → Utilisateurs**. Le contrôle est fait **côté serveur**, refus par défaut : toute requête
+d'écriture exige au moins *Opérateur*. Changer le rôle, désactiver ou réinitialiser le mot de passe d'un compte ferme
+ses sessions ouvertes. Il reste toujours au moins un administrateur actif, et personne ne peut modifier son propre
+rôle ni supprimer son propre compte. Les comptes créés avant la v0.7 sont administrateurs.
+
 ## Alertes et notifications
 
 Les règles sont évaluées à chaque collecte (10 s) : nœud hors ligne, source injoignable, CPU / mémoire élevés
@@ -256,6 +270,7 @@ jamais renvoyés au navigateur ; les messages d'erreur n'incluent jamais l'URL d
 | GET · POST | `/api/proxmox/guests/{node}/{qemu\|lxc}/{vmid}/snapshots` | Lister / créer (`{"name", "description", "vmstate"}`) |
 | POST | `…/snapshots/{name}/rollback` | Restaurer (`{"confirm": "<name>"}` obligatoire) |
 | DELETE | `…/snapshots/{name}` | Supprimer un snapshot |
+| GET · POST | `/api/users` · PATCH · DELETE `/api/users/{id}` | Comptes (`{"role": "viewer\|operator\|admin", "disabled", "password"}`) — administrateurs |
 | GET | `/api/alerts?state=active\|all` · POST `/api/alerts/{id}/ack` | Alertes actives / historique, acquittement |
 | GET · PUT | `/api/alerts/config` | Règles et canaux de notification (secrets masqués en lecture) |
 | POST | `/api/alerts/channels/{id}/test` · `/api/alerts/evaluate` | Notification de test, réévaluation immédiate |
