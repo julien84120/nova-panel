@@ -13,6 +13,7 @@ from app.auth import COOKIE_NAME, CSRF_HEADER, MIN_PASSWORD_LENGTH, AuthError, A
 from app.collector import Collector
 from app.config import get_settings
 from app.db import Database
+from app.metrics import MetricsStore
 from app.routes.infra import router as infra_router
 from app.schemas import Dashboard, Guest, Host
 
@@ -47,7 +48,7 @@ async def lifespan(app: FastAPI):
     app.state.audit = AuditLog(db)
     if app.state.auth.setup_required():
         _print_setup_banner(app.state.auth)
-    collector = Collector(settings)
+    collector = Collector(settings, MetricsStore(db))
     app.state.collector = collector
     await collector.start()
     yield

@@ -1,4 +1,4 @@
-import { FileText, MoreHorizontal } from "lucide-react"
+import { Archive, FileText, MoreHorizontal } from "lucide-react"
 import { useState } from "react"
 
 import {
@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { BackupDialog } from "@/components/infra/BackupDialog"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -32,6 +33,7 @@ export function ActionsMenu({ guest, onLogs, align = "end" }: { guest: Guest; on
   const { data } = useDashboard()
   const { guestAction, containerAction } = useActions()
   const [pending, setPending] = useState<ActionDef | null>(null)
+  const [backupOpen, setBackupOpen] = useState(false)
   const enabled = data?.actions_enabled ?? true
   const actions = availableActions(guest)
 
@@ -63,6 +65,15 @@ export function ActionsMenu({ guest, onLogs, align = "end" }: { guest: Guest; on
             </DropdownMenuItem>
           ))}
           {!enabled && <div className="px-2 py-1.5 text-xs text-muted-foreground">{t("act.disabled")}</div>}
+          {guest.type !== "docker" && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={!enabled} onSelect={() => setBackupOpen(true)}>
+                <Archive />
+                {t("act.backup")}
+              </DropdownMenuItem>
+            </>
+          )}
           {onLogs && (
             <>
               <DropdownMenuSeparator />
@@ -74,6 +85,8 @@ export function ActionsMenu({ guest, onLogs, align = "end" }: { guest: Guest; on
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <BackupDialog guest={backupOpen ? guest : null} onClose={() => setBackupOpen(false)} />
 
       <AlertDialog open={!!pending} onOpenChange={(o) => !o && setPending(null)}>
         <AlertDialogContent onClick={(e) => e.stopPropagation()}>

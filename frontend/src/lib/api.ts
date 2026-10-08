@@ -122,6 +122,104 @@ export interface GuestDetail {
   history: HistoryPoint[]
 }
 
+export type HistoryRange = "hour" | "day" | "week"
+
+export interface HostSeries {
+  id: string
+  name: string
+  kind: HostKind
+  points: UsagePoint[]
+}
+
+export interface NetIface {
+  node: string
+  iface: string
+  type: string
+  active: boolean
+  autostart: boolean
+  method: string
+  cidr: string
+  gateway: string
+  cidr6: string
+  ports: string[]
+  vlan_aware: boolean
+  bond_mode: string
+  comments: string
+}
+
+export interface GuestNic {
+  guest_id: string
+  guest_name: string
+  guest_type: "qemu" | "lxc"
+  node: string
+  status: string
+  iface: string
+  model: string
+  mac: string
+  bridge: string
+  tag: string
+  firewall: boolean
+  ip: string
+  rate: string
+  link_down: boolean
+}
+
+export interface DockerNetwork {
+  id: string
+  name: string
+  host: string
+  driver: string
+  scope: string
+  subnet: string
+  gateway: string
+  internal: boolean
+  builtin: boolean
+  containers: { name: string; ip: string }[]
+}
+
+export interface NetworkData {
+  interfaces: NetIface[]
+  guest_nics: GuestNic[]
+  docker_networks: DockerNetwork[]
+  errors: { source: string; detail: string }[]
+}
+
+export interface BackupJob {
+  id: string
+  enabled: boolean
+  schedule: string
+  next_run: number
+  storage: string
+  selection: string
+  exclude: string
+  mode: string
+  compress: string
+  node: string
+  comment: string
+  retention: string
+}
+
+export interface BackupFile {
+  volid: string
+  storage: string
+  vmid: string
+  type: "qemu" | "lxc"
+  size: number
+  ctime: number
+  format: string
+  notes: string
+  protected: boolean
+  verified: string
+}
+
+export interface BackupsData {
+  jobs: BackupJob[]
+  files: BackupFile[]
+  not_backed_up: { vmid: string; name: string; type: string }[]
+  errors: { storage: string; detail: string }[]
+  tasks: Task[]
+}
+
 export interface TaskStatusResult {
   upid: string
   running: boolean
@@ -243,6 +341,17 @@ export const api = {
     post<{ upid: string; node: string }>(`/api/proxmox/guests/${encodeURIComponent(node)}/${type}/${encodeURIComponent(vmid)}/${action}`),
   taskStatus: (node: string, upid: string) =>
     request<TaskStatusResult>(`/api/proxmox/task?node=${encodeURIComponent(node)}&upid=${encodeURIComponent(upid)}`),
+  metricsHistory: (range: HistoryRange, host?: string) =>
+    request<{ range: HistoryRange; hosts: HostSeries[] }>(
+      `/api/metrics/history?range=${range}${host ? `&host=${encodeURIComponent(host)}` : ""}`
+    ),
+  network: () => request<NetworkData>("/api/network"),
+  backups: () => request<BackupsData>("/api/backups"),
+  guestBackup: (node: string, type: "qemu" | "lxc", vmid: string, storage: string, mode: "snapshot" | "suspend" | "stop") =>
+    post<{ upid: string; node: string }>(`/api/proxmox/guests/${encodeURIComponent(node)}/${type}/${encodeURIComponent(vmid)}/backup`, {
+      storage,
+      mode,
+    }),
   containerAction: (id: string, action: ContainerAction) =>
     post<{ ok: boolean }>(`/api/docker/containers/${encodeURIComponent(id)}/${action}`),
   containerLogs: (id: string, tail = 200) =>

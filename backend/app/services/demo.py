@@ -407,3 +407,294 @@ def demo_logs(name: str) -> str:
         ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now - (40 - i) * 37))
         lines.append(f"{ts}.000000000Z [{name}] demo log line {i + 1}: request handled in {_rng.randint(2, 90)}ms")
     return "\n".join(lines) + "\n"
+
+
+def demo_host_history(
+    docker_name: str, days: int = 7, step: int = 300
+) -> dict[str, list[tuple[str, int, float, float]]]:
+    """Historique synthétique distinct par hôte (profil propre à chacun)."""
+    now = int(time.time())
+    profiles = {"pve:pve-01": (34, 10, 67, 3), "pve:pve-02": (78, 8, 84, 2), f"docker:{docker_name}": (21, 6, 45, 4)}
+    out: dict[str, list[tuple[str, int, float, float]]] = {}
+    rng = random.Random(42)
+    for hid, (cpu, cpu_amp, mem, mem_amp) in profiles.items():
+        pts = []
+        for t in range(now - days * 86400, now, step):
+            day = math.sin((t % 86400) / 86400 * 2 * math.pi - math.pi / 2)  # cycle jour/nuit
+            pts.append(
+                (
+                    hid,
+                    t,
+                    round(max(1, min(99, cpu + cpu_amp * day + rng.uniform(-4, 4))), 1),
+                    round(max(5, min(98, mem + mem_amp * day + rng.uniform(-1, 1))), 1),
+                )
+            )
+        out[hid] = pts
+    return out
+
+
+# ── réseau et sauvegardes fictifs ────────────────────────────
+_demo_backups: list[dict] = []
+
+
+def _stamp(ts: int) -> str:
+    return time.strftime("%Y_%m_%d-%H_%M_%S", time.gmtime(ts))
+
+
+def demo_network(docker_name: str) -> dict:
+    data = demo_proxmox()
+    interfaces = []
+    for node, ip in (("pve-01", "192.168.1.10"), ("pve-02", "192.168.1.11")):
+        interfaces += [
+            {
+                "node": node,
+                "iface": "vmbr0",
+                "type": "bridge",
+                "active": True,
+                "autostart": True,
+                "method": "static",
+                "cidr": f"{ip}/24",
+                "gateway": "192.168.1.1",
+                "cidr6": "",
+                "ports": ["enp3s0"],
+                "vlan_aware": True,
+                "bond_mode": "",
+                "comments": "LAN",
+            },
+            {
+                "node": node,
+                "iface": "vmbr1",
+                "type": "bridge",
+                "active": True,
+                "autostart": True,
+                "method": "manual",
+                "cidr": "",
+                "gateway": "",
+                "cidr6": "",
+                "ports": [],
+                "vlan_aware": False,
+                "bond_mode": "",
+                "comments": "Réseau isolé (lab)",
+            },
+            {
+                "node": node,
+                "iface": "enp3s0",
+                "type": "eth",
+                "active": True,
+                "autostart": True,
+                "method": "manual",
+                "cidr": "",
+                "gateway": "",
+                "cidr6": "",
+                "ports": [],
+                "vlan_aware": False,
+                "bond_mode": "",
+                "comments": "",
+            },
+            {
+                "node": node,
+                "iface": "enp4s0",
+                "type": "eth",
+                "active": False,
+                "autostart": False,
+                "method": "manual",
+                "cidr": "",
+                "gateway": "",
+                "cidr6": "",
+                "ports": [],
+                "vlan_aware": False,
+                "bond_mode": "",
+                "comments": "",
+            },
+        ]
+    nics = []
+    for i, g in enumerate(data.guests):
+        lab = g.id in ("110", "207")
+        nics.append(
+            {
+                "guest_id": g.id,
+                "guest_name": g.name,
+                "guest_type": g.type,
+                "node": g.host,
+                "status": g.status,
+                "iface": "net0" if g.type == "qemu" else "eth0",
+                "model": "virtio" if g.type == "qemu" else "veth",
+                "mac": f"BC:24:11:{i:02X}:3A:{(i * 7) % 256:02X}",
+                "bridge": "vmbr1" if lab else "vmbr0",
+                "tag": "20" if g.id == "102" else "",
+                "firewall": not lab,
+                "ip": "dhcp" if g.type == "lxc" else "",
+                "rate": "",
+                "link_down": False,
+            }
+        )
+    docker = [
+        {
+            "id": "a1b2c3d4e5f6",
+            "name": "proxy",
+            "host": docker_name,
+            "driver": "bridge",
+            "scope": "local",
+            "subnet": "172.20.0.0/16",
+            "gateway": "172.20.0.1",
+            "internal": False,
+            "builtin": False,
+            "containers": [{"name": "nginx-proxy", "ip": "172.20.0.2"}, {"name": "uptime-kuma", "ip": "172.20.0.3"}],
+        },
+        {
+            "id": "b2c3d4e5f6a1",
+            "name": "db",
+            "host": docker_name,
+            "driver": "bridge",
+            "scope": "local",
+            "subnet": "172.21.0.0/16",
+            "gateway": "172.21.0.1",
+            "internal": True,
+            "builtin": False,
+            "containers": [{"name": "postgres-16", "ip": "172.21.0.2"}],
+        },
+        {
+            "id": "c3d4e5f6a1b2",
+            "name": "bridge",
+            "host": docker_name,
+            "driver": "bridge",
+            "scope": "local",
+            "subnet": "172.17.0.0/16",
+            "gateway": "172.17.0.1",
+            "internal": False,
+            "builtin": True,
+            "containers": [],
+        },
+        {
+            "id": "d4e5f6a1b2c3",
+            "name": "host",
+            "host": docker_name,
+            "driver": "host",
+            "scope": "local",
+            "subnet": "",
+            "gateway": "",
+            "internal": False,
+            "builtin": True,
+            "containers": [],
+        },
+    ]
+    return {"interfaces": interfaces, "guest_nics": nics, "docker_networks": docker}
+
+
+def demo_backups() -> dict:
+    now = int(time.time())
+    files = []
+    rng = random.Random(7)
+    plan = {"101": 7, "102": 7, "103": 7, "204": 7, "205": 3, "206": 7}
+    for vmid, n in plan.items():
+        g = next(x for x in _PVE_GUESTS if x[0] == vmid)
+        for d in range(n):
+            ts = now - d * 86400 - 3600 * 3 - rng.randint(0, 900)
+            storage = "nas-backup"
+            files.append(
+                {
+                    "volid": f"{storage}:backup/vzdump-{g[2]}-{vmid}-{_stamp(ts)}"
+                    f".{'vma' if g[2] == 'qemu' else 'tar'}.zst",
+                    "storage": storage,
+                    "vmid": vmid,
+                    "type": g[2],
+                    "size": int(g[8] * 0.35 * GiB * rng.uniform(0.9, 1.1)),
+                    "ctime": ts,
+                    "format": "vma.zst" if g[2] == "qemu" else "tar.zst",
+                    "notes": g[1],
+                    "protected": d == 6,
+                    "verified": "",
+                }
+            )
+    files[3]["notes"] = "avant mise à jour k8s"
+    with _lock:
+        files = list(_demo_backups) + files
+    jobs = [
+        {
+            "id": "backup-daily",
+            "enabled": True,
+            "schedule": "02:30",
+            "next_run": now + 6 * 3600,
+            "storage": "nas-backup",
+            "selection": "101,102,103,204,206",
+            "exclude": "",
+            "mode": "snapshot",
+            "compress": "zstd",
+            "node": "",
+            "comment": "Quotidienne — production",
+            "retention": "keep-daily=7,keep-weekly=4",
+        },
+        {
+            "id": "backup-weekly",
+            "enabled": True,
+            "schedule": "sun 04:00",
+            "next_run": now + 3 * 86400,
+            "storage": "nas-backup",
+            "selection": "205",
+            "exclude": "",
+            "mode": "snapshot",
+            "compress": "zstd",
+            "node": "pve-02",
+            "comment": "Hebdomadaire — DNS",
+            "retention": "keep-last=3",
+        },
+        {
+            "id": "backup-pbs",
+            "enabled": False,
+            "schedule": "sat 01:00",
+            "next_run": 0,
+            "storage": "pbs",
+            "selection": "all",
+            "exclude": "110,207",
+            "mode": "snapshot",
+            "compress": "",
+            "node": "",
+            "comment": "PBS (désactivé : datastore hors ligne)",
+            "retention": "",
+        },
+    ]
+    not_backed = [
+        {"vmid": "110", "name": "old-ubuntu", "type": "qemu"},
+        {"vmid": "207", "name": "test-debian", "type": "lxc"},
+    ]
+    return {
+        "jobs": jobs,
+        "files": sorted(files, key=lambda f: f["ctime"], reverse=True),
+        "not_backed_up": not_backed,
+        "errors": [{"storage": "pbs", "detail": "storage 'pbs' is not online"}],
+    }
+
+
+def demo_backup_now(gtype: str, vmid: str, node: str, storage: str, user: str) -> str:
+    g = next(x for x in _PVE_GUESTS if x[0] == vmid)
+    ts = int(time.time())
+    upid = f"UPID:{node}:DEMO:{ts * 1000:X}:vzdump:{vmid}:{user}:"
+    with _lock:
+        _demo_backups.insert(
+            0,
+            {
+                "volid": f"{storage}:backup/vzdump-{gtype}-{vmid}-{_stamp(ts)}.zst",
+                "storage": storage,
+                "vmid": vmid,
+                "type": gtype,
+                "size": int(g[8] * 0.35 * GiB),
+                "ctime": ts,
+                "format": "vma.zst" if gtype == "qemu" else "tar.zst",
+                "notes": f"NovaPanel: {g[1]}",
+                "protected": False,
+                "verified": "",
+            },
+        )
+        _demo_tasks.insert(
+            0,
+            Task(
+                id=upid,
+                type="vzdump",
+                target=f"{'VM' if gtype == 'qemu' else 'CT'} {vmid}",
+                host=node,
+                status="ok",
+                started_at=ts,
+                user=user,
+            ),
+        )
+    return upid

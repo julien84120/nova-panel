@@ -113,3 +113,80 @@ def test_helpers():
     )
     assert [x["id"] for x in d["disks"]] == ["scsi0"] and d["tags"] == ["a", "b"] and d["agent"] and d["onboot"]
     assert d["history"][0] == {"t": 1, "cpu": 50.0, "memory": 50.0, "netin": 0, "netout": 0}
+
+
+def test_metrics_history_per_host(client):
+    allh = client.get("/api/metrics/history", params={"range": "day"}).json()
+    ids = {h["id"] for h in allh["hosts"]}
+    assert {"pve:pve-01", "pve:pve-02"} <= ids and any(i.startswith("docker:") for i in ids)
+    by = {h["id"]: h for h in allh["hosts"]}
+    assert len(by["pve:pve-01"]["points"]) > 50
+    # séries distinctes par hôte
+    assert by["pve:pve-01"]["points"][-5]["cpu"] != by["pve:pve-02"]["points"][-5]["cpu"]
+    one = client.get("/api/metrics/history", params={"range": "hour", "host": "pve:pve-02"}).json()
+    assert [h["id"] for h in one["hosts"]] == ["pve:pve-02"] and len(one["hosts"][0]["points"]) > 10
+    assert client.get("/api/metrics/history", params={"host": "nope"}).status_code == 404
+    assert client.get("/api/metrics/history", params={"range": "year"}).status_code == 422
+
+
+def test_network_and_backups(client):
+    n = client.get("/api/network").json()
+    assert any(i["type"] == "bridge" for i in n["interfaces"]) and n["guest_nics"] and n["docker_networks"]
+    b = client.get("/api/backups").json()
+    assert b["jobs"] and b["files"] and {x["vmid"] for x in b["not_backed_up"]} == {"110", "207"}
+    before = len(b["files"])
+    bad = client.post("/api/proxmox/guests/pve-01/qemu/103/backup", json={"storage": "local-lvm"}, headers=H)
+    assert bad.status_code == 400  # stockage sans contenu « backup »
+    r = client.post("/api/proxmox/guests/pve-01/qemu/103/backup", json={"storage": "nas-backup"}, headers=H)
+    assert r.status_code == 200, r.text
+    assert len(client.get("/api/backups").json()["files"]) == before + 1
+    assert client.get("/api/audit").json()[0]["action"] == "backup"
+
+
+def test_parsers_network():
+    from app.schemas import Guest
+    from app.services.proxmox import normalize_backup, normalize_job, parse_guest_nics
+
+    g = Guest(id="100", name="web", type="qemu", host="pve", status="running", cpu=0, mem_used=0, mem_total=0)
+    nics = parse_guest_nics(
+        g,
+        {
+            "net0": "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1,tag=20",
+            "ipconfig0": "ip=10.0.0.5/24,gw=10.0.0.1",
+            "name": "web",
+        },
+    )
+    assert nics == [
+        {
+            "guest_id": "100",
+            "guest_name": "web",
+            "guest_type": "qemu",
+            "node": "pve",
+            "status": "running",
+            "iface": "net0",
+            "model": "virtio",
+            "mac": "BC:24:11:AA:BB:CC",
+            "bridge": "vmbr0",
+            "tag": "20",
+            "firewall": True,
+            "ip": "10.0.0.5/24",
+            "rate": "",
+            "link_down": False,
+        }
+    ]
+    ct = Guest(id="200", name="dns", type="lxc", host="pve", status="running", cpu=0, mem_used=0, mem_total=0)
+    n2 = parse_guest_nics(ct, {"net0": "name=eth0,bridge=vmbr1,hwaddr=AA:BB,ip=dhcp,type=veth"})
+    assert n2[0]["iface"] == "eth0" and n2[0]["bridge"] == "vmbr1" and n2[0]["ip"] == "dhcp"
+    assert normalize_job({"id": "j", "all": 1, "enabled": 1, "schedule": "02:30"})["selection"] == "all"
+    assert normalize_job({"id": "j", "vmid": "100,101", "enabled": 0})["enabled"] is False
+    f = normalize_backup(
+        "nas",
+        {
+            "volid": "nas:backup/vzdump-lxc-200-x.tar.zst",
+            "vmid": 200,
+            "size": 5,
+            "ctime": 9,
+            "verification": {"state": "ok"},
+        },
+    )
+    assert f["type"] == "lxc" and f["verified"] == "ok" and f["vmid"] == "200"

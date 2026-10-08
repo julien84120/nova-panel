@@ -9,8 +9,10 @@ import { navigation } from "@/layout/navigation"
 import { Toaster } from "@/components/ui/sonner"
 import { ComingSoon } from "@/pages/ComingSoon"
 import { Dashboard } from "@/pages/Dashboard"
+import { BackupsPage } from "@/pages/BackupsPage"
 import { DockerPage } from "@/pages/DockerPage"
 import { GuestsPage } from "@/pages/GuestsPage"
+import { NetworkPage } from "@/pages/NetworkPage"
 import { NodesPage } from "@/pages/NodesPage"
 import { StoragePage } from "@/pages/StoragePage"
 import { TasksPage } from "@/pages/TasksPage"
@@ -20,7 +22,7 @@ import { SetupPage } from "@/pages/SetupPage"
 import { ApiErrorBanner } from "@/components/dashboard/SourceAlerts"
 
 // Sections encore à venir
-const IMPLEMENTED = new Set(["/", "/nodes", "/vms", "/lxc", "/docker", "/storage", "/tasks"])
+const IMPLEMENTED = new Set(["/", "/nodes", "/vms", "/lxc", "/docker", "/storage", "/network", "/backups", "/tasks"])
 const placeholderRoutes = navigation.flatMap((s) => s.items).filter((i) => !IMPLEMENTED.has(i.to))
 
 export default function App() {
@@ -54,6 +56,8 @@ export default function App() {
             <Route path="/lxc" element={<GuestsPage key="lxc" type="lxc" />} />
             <Route path="/docker" element={<DockerPage />} />
             <Route path="/storage" element={<StoragePage />} />
+            <Route path="/network" element={<NetworkPage />} />
+            <Route path="/backups" element={<BackupsPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             {placeholderRoutes.map((item) => (
               <Route key={item.to} path={item.to} element={<ComingSoon title={item.label} />} />

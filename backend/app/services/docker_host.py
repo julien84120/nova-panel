@@ -126,6 +126,29 @@ def container_mem(stats: dict) -> tuple[int, int]:
     return max(usage - cache, 0), m.get("limit", 0)
 
 
+def normalize_docker_network(host: str, a: dict, ipam: dict) -> dict:
+    containers = a.get("Containers") or {}
+    name = a.get("Name", "")
+    return {
+        "id": (a.get("Id") or "")[:12],
+        "name": name,
+        "host": host,
+        "driver": a.get("Driver", ""),
+        "scope": a.get("Scope", ""),
+        "subnet": ipam.get("Subnet", ""),
+        "gateway": ipam.get("Gateway", ""),
+        "internal": bool(a.get("Internal")),
+        "builtin": name in ("bridge", "host", "none"),
+        "containers": sorted(
+            (
+                {"name": c.get("Name", ""), "ip": (c.get("IPv4Address") or "").split("/")[0]}
+                for c in containers.values()
+            ),
+            key=lambda c: c["name"],
+        ),
+    }
+
+
 class DockerCollector:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -241,6 +264,14 @@ class DockerCollector:
             c.restart(timeout=15)
         else:
             getattr(c, action)()
+
+    def networks(self) -> list[dict]:
+        out = []
+        for n in self.client.networks.list(greedy=True):
+            a = n.attrs or {}
+            ipam = ((a.get("IPAM") or {}).get("Config") or [{}])[0] or {}
+            out.append(normalize_docker_network(self.settings.docker_display_name, a, ipam))
+        return sorted(out, key=lambda x: (x["builtin"], x["name"]))
 
     def container_logs(self, container_id: str, tail: int = 200) -> str:
         c = self.client.containers.get(container_id)

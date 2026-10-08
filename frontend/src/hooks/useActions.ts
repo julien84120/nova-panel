@@ -30,6 +30,40 @@ export function useActions() {
     [t]
   )
 
+  /** Suit une tâche Proxmox (UPID) jusqu'à sa fin et met à jour la notification. */
+  const trackTask = useCallback(
+    async (id: string | number, node: string, upid: string, action: string, name: string, maxSeconds = 120) => {
+      for (let i = 0; i < maxSeconds; i++) {
+        const st = await api.taskStatus(node, upid)
+        if (!st.running) {
+          if (st.ok) toast.success(fmt("act.done", action, name), { id })
+          else toast.error(fmt("act.failed", action, name), { id, description: st.exitstatus })
+          return st.ok
+        }
+        await sleep(1000)
+      }
+      toast.message(fmt("act.pending", action, name), { id, description: t("act.stillRunning") })
+      return null
+    },
+    [fmt, t]
+  )
+
+  const backupGuest = useCallback(
+    async (g: Guest, storage: string, mode: "snapshot" | "suspend" | "stop") => {
+      if (g.type === "docker") return
+      const id = toast.loading(fmt("act.pending", "backup", g.name))
+      try {
+        const { upid, node } = await api.guestBackup(g.host, g.type, g.id, storage, mode)
+        await trackTask(id, node, upid, "backup", g.name, 3600)
+      } catch (e) {
+        toast.error(fmt("act.failed", "backup", g.name), { id, description: errorText(e) })
+      } finally {
+        pollSoon()
+      }
+    },
+    [fmt, errorText, pollSoon, trackTask]
+  )
+
   /** Action Proxmox : lance la tâche, suit son UPID jusqu'à la fin, puis rafraîchit. */
   const guestAction = useCallback(
     async (g: Guest, action: GuestAction) => {
@@ -37,22 +71,14 @@ export function useActions() {
       const id = toast.loading(fmt("act.pending", action, g.name))
       try {
         const { upid, node } = await api.guestAction(g.host, g.type, g.id, action)
-        for (let i = 0; i < 120; i++) {
-          const st = await api.taskStatus(node, upid)
-          if (!st.running) {
-            if (st.ok) toast.success(fmt("act.done", action, g.name), { id })
-            else toast.error(fmt("act.failed", action, g.name), { id, description: st.exitstatus })
-            break
-          }
-          await sleep(1000)
-        }
+        await trackTask(id, node, upid, action, g.name)
       } catch (e) {
         toast.error(fmt("act.failed", action, g.name), { id, description: errorText(e) })
       } finally {
         pollSoon()
       }
     },
-    [fmt, errorText, pollSoon]
+    [fmt, errorText, pollSoon, trackTask]
   )
 
   const containerAction = useCallback(
@@ -70,5 +96,5 @@ export function useActions() {
     [fmt, errorText, pollSoon]
   )
 
-  return { guestAction, containerAction }
+  return { guestAction, containerAction, backupGuest }
 }

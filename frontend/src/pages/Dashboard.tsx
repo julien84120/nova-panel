@@ -1,16 +1,18 @@
 import { Activity, Cpu, HardDrive, MemoryStick, RefreshCw } from "lucide-react"
+import { useState } from "react"
 
 import { HostsList } from "@/components/dashboard/HostsList"
 import { MetricCard } from "@/components/dashboard/MetricCard"
 import { RecentTasks } from "@/components/dashboard/RecentTasks"
 import { ApiErrorBanner, SourceAlerts } from "@/components/dashboard/SourceAlerts"
 import { TopGuests } from "@/components/dashboard/TopGuests"
-import { UsageChart } from "@/components/dashboard/UsageChart"
+import { ResourceChart } from "@/components/dashboard/ResourceChart"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { useDashboard } from "@/hooks/DashboardProvider"
+import { usePolling } from "@/hooks/usePolling"
 import { useI18n } from "@/i18n/I18nProvider"
-import type { UsagePoint } from "@/lib/api"
+import { api, type HistoryRange, type UsagePoint } from "@/lib/api"
 import { cn, formatBytes, pct, splitBytes } from "@/lib/utils"
 
 /** Variation (en points de %) entre le début et la fin de la fenêtre d'historique. */
@@ -23,6 +25,11 @@ function trendOf(history: UsagePoint[], key: "cpu" | "memory") {
 export function Dashboard() {
   const { t } = useI18n()
   const { view, data, error, loading, refresh, refreshing, selectedHost } = useDashboard()
+  const [range, setRange] = useState<HistoryRange>("hour")
+  const hostFilter = selectedHost === "all" ? undefined : selectedHost
+  // Historique par hôte (base locale du serveur) — distinct pour chaque machine
+  const metrics = usePolling(() => api.metricsHistory(range, hostFilter), range === "hour" ? 15_000 : 60_000, [range, hostFilter])
+  const series = metrics.data?.hosts ?? []
 
   const header = (
     <div className="flex flex-wrap items-center justify-between gap-4">
@@ -53,8 +60,9 @@ export function Dashboard() {
   }
 
   const s = view.summary
-  // L'historique est agrégé sur tous les hôtes : on ne l'affiche que pour la vue globale
-  const history = selectedHost === "all" ? view.history : []
+  // Mini-graphes des cartes : agrégat global, ou l'historique de l'hôte sélectionné (dernière heure)
+  const history: UsagePoint[] =
+    selectedHost === "all" ? view.history : range === "hour" ? (series.find((h) => h.id === selectedHost)?.points ?? []) : []
   const [diskV, diskU] = splitBytes(s.disk_used)
   const [memV, memU] = splitBytes(s.mem_used)
   const running = view.guests.filter((g) => g.status === "running")
@@ -69,9 +77,9 @@ export function Dashboard() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label={t("dash.cpu")}
-          value={`${Math.round(s.cpu)}`}
+          value={s.cpu < 10 ? s.cpu.toFixed(1) : `${Math.round(s.cpu)}`}
           unit="%"
-          detail={`${s.cores} ${t("dash.cores")} · ${view.hosts.length} ${t("dash.hosts").toLowerCase()}`}
+          detail={`${s.cores} ${t("dash.cores")} · ${view.hosts.length} ${t(view.hosts.length > 1 ? "dash.hostsCount" : "dash.hostCount")}`}
           icon={Cpu}
           trend={(() => {
             const v = trendOf(history, "cpu")
@@ -118,7 +126,7 @@ export function Dashboard() {
 
       <div className="grid gap-4 xl:grid-cols-5">
         <div className="xl:col-span-3 [&>*]:h-full">
-          <UsageChart data={history} />
+          <ResourceChart series={series} single={!!hostFilter} range={range} onRange={setRange} loading={!metrics.data} />
         </div>
         <div className="xl:col-span-2 [&>*]:h-full">
           <TopGuests guests={view.guests} />

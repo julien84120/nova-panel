@@ -13,6 +13,7 @@ import time
 from collections import deque
 
 from app.config import Settings
+from app.metrics import MetricsStore
 from app.schemas import Dashboard, Guest, Host, SourceStatus, Storage, Summary, Task, UsagePoint
 from app.services import demo
 from app.services.docker_host import DockerCollector
@@ -23,8 +24,10 @@ HISTORY_SECONDS = 3600
 
 
 class Collector:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, metrics: MetricsStore | None = None):
         self.settings = settings
+        self.metrics = metrics
+        self._cache: dict[str, tuple[float, object]] = {}
         self.proxmox = ProxmoxCollector(settings) if settings.proxmox_enabled else None
         self.docker = DockerCollector(settings) if settings.docker_enabled else None
         self.history: deque[UsagePoint] = deque()
@@ -55,12 +58,29 @@ class Collector:
             except Exception:  # noqa: BLE001 — le collecteur ne doit jamais s'arrêter
                 log.exception("refresh failed")
 
+    def cached(self, key: str, ttl: float, fn):
+        """Petit cache mémoire pour les lectures coûteuses (réseau, sauvegardes)."""
+        hit = self._cache.get(key)
+        if hit and time.time() - hit[0] < ttl:
+            return hit[1]
+        value = fn()
+        self._cache[key] = (time.time(), value)
+        return value
+
+    def invalidate(self, prefix: str = "") -> None:
+        for k in [k for k in self._cache if k.startswith(prefix)]:
+            self._cache.pop(k, None)
+
     def _seed_history(self) -> None:
         self._last_seed_attempt = time.time()
         points: list[UsagePoint] = []
         if self.proxmox:
             try:
                 points = self.proxmox.history()
+                if self.metrics:
+                    # Historique par nœud (RRD 1 h, 24 h, 7 j) → base locale, sans écraser les mesures existantes
+                    for tf in ("hour", "day", "week"):
+                        self.metrics.seed(self.proxmox.node_rrd_samples(tf))
                 self._history_seeded = True
             except Exception as exc:  # noqa: BLE001
                 hint = ""
@@ -73,6 +93,13 @@ class Collector:
                 return
         elif not self.docker:
             points = demo.demo_history()
+        if self.metrics and (self.proxmox is None or self.docker is None):
+            # Hôtes fictifs : historique synthétique d'une semaine (une seule fois)
+            for host_id, samples in demo.demo_host_history(self.settings.docker_display_name).items():
+                skip_pve = self.proxmox is not None and host_id.startswith("pve:")
+                skip_docker = self.docker is not None and host_id.startswith("docker:")
+                if not (skip_pve or skip_docker) and not self.metrics.has_data(host_id, int(time.time()) - 3600):
+                    self.metrics.seed(samples)
         with self._lock:
             # Fusionne avec les points déjà collectés en direct, sans doublons
             merged = {p.t: p for p in [*points, *self.history]}
@@ -165,6 +192,15 @@ class Collector:
             )
 
             now = int(time.time())
+            if self.metrics:
+                try:
+                    self.metrics.add(
+                        (h.id, now, h.cpu, round(h.mem_used / h.mem_total * 100, 1))
+                        for h in hosts
+                        if h.status != "offline" and h.mem_total
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("metrics write failed")
             if mem_total:
                 self.history.append(UsagePoint(t=now, cpu=cpu, memory=round(mem_used / mem_total * 100, 1)))
             while self.history and self.history[0].t < now - HISTORY_SECONDS:

@@ -21,7 +21,8 @@
 | 2 | Backend FastAPI : Proxmox (`proxmoxer`, jeton API lecture seule) + Docker via SSH (`docker`, `paramiko`), dashboard branché sur l'API, mode démo automatique | ✅ |
 | 3 | Authentification (Argon2id, sessions, anti-bruteforce), déploiement : `install.sh` (systemd), Docker Compose (+ HTTPS Caddy), releases GitHub | ✅ |
 | 4 | Pages Nœuds, VMs, LXC, Docker (logs), Stockage, Tâches + journal ; actions démarrer/éteindre/redémarrer/forcer l'arrêt… avec confirmation ; recherche globale ⌘K | ✅ |
-| 5 | Réseau, sauvegardes (vzdump/PBS), snapshots, notifications | ⏳ |
+| 5 | Historique par hôte persistant (1 h / 24 h / 7 j), graphique « une courbe par machine » ; pages Réseau (interfaces, ponts, VLAN, réseaux Docker) et Sauvegardes (tâches planifiées, couverture, archives, sauvegarde immédiate) | ✅ |
+| 6 | Snapshots, notifications (nœud hors ligne, stockage plein, sauvegarde en échec) | ⏳ |
 
 ## Stack
 
@@ -162,11 +163,13 @@ PROXMOX_VERIFY_SSL=false   # certificat auto-signé par défaut
 
 ### 1 bis. Autoriser les actions (démarrer, éteindre, redémarrer…)
 
-Les boutons d'action exigent le privilège **`VM.PowerMgmt`**. On l'ajoute au jeton existant via un rôle dédié,
+Les boutons d'action exigent le privilège **`VM.PowerMgmt`** ; « Sauvegarder maintenant » exige en plus
+**`VM.Backup`** et **`Datastore.AllocateSpace`** (écriture sur le stockage de sauvegarde). On l'ajoute au jeton existant via un rôle dédié,
 sans retirer `PVEAuditor` (les rôles s'additionnent) :
 
 ```bash
-pveum role add NovaPanelOperator --privs "VM.PowerMgmt"
+pveum role add NovaPanelOperator --privs "VM.PowerMgmt VM.Backup Datastore.AllocateSpace"
+# (rôle déjà créé en v0.4 ? → pveum role modify NovaPanelOperator --privs "VM.PowerMgmt VM.Backup Datastore.AllocateSpace")
 pveum acl modify / --users novapanel@pve --roles NovaPanelOperator
 pveum acl modify / --tokens 'novapanel@pve!novapanel' --roles NovaPanelOperator
 
@@ -232,10 +235,15 @@ DOCKER_DISPLAY_NAME=oracle-docker
 | GET | `/api/proxmox/task?node=&upid=` | Suivi d'une tâche Proxmox |
 | POST | `/api/docker/containers/{id}/{start\|stop\|restart\|pause\|unpause}` | Action Docker |
 | GET | `/api/docker/containers/{id}/logs?tail=200` | Logs d'un conteneur |
+| GET | `/api/metrics/history?range=hour\|day\|week&host=` | Historique CPU / mémoire par hôte |
+| GET | `/api/network` | Interfaces Proxmox, cartes réseau des invités, réseaux Docker |
+| GET | `/api/backups` | Tâches planifiées, archives, invités non couverts |
+| POST | `/api/proxmox/guests/{node}/{qemu\|lxc}/{vmid}/backup` | Sauvegarde immédiate (`{"storage": "...", "mode": "snapshot"}`) |
 
 Un collecteur en tâche de fond interroge les sources toutes les `NOVA_POLL_INTERVAL` secondes (10 par défaut) ;
 les routes lisent le dernier instantané, quel que soit le nombre d'onglets ouverts.
-L'historique du graphique est amorcé avec les RRD Proxmox de la dernière heure.
+L'historique est conservé **par hôte** dans la base locale (8 jours) : il survit aux redémarrages et
+est amorcé avec les RRD Proxmox (1 h, 24 h, 7 j). Pour un hôte Docker, l'historique démarre à l'installation.
 
 Toutes les routes sauf `/api/health` et `/api/auth/*` exigent une session. Routes d'authentification :
 `GET /api/auth/status`, `POST /api/auth/setup`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/password`.

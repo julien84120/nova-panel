@@ -105,6 +105,26 @@ class ProxmoxCollector:
             )
         return points
 
+    def node_rrd_samples(self, timeframe: str) -> list[tuple[str, int, float, float]]:
+        """Points RRD de chaque nœud en ligne : (host_id, t, cpu %, mémoire %)."""
+        out = []
+        for n in self.api.nodes.get():
+            if n.get("status") != "online":
+                continue
+            for p in self.api.nodes(n["node"]).rrddata.get(timeframe=timeframe, cf="AVERAGE"):
+                total = p.get("memtotal") or p.get("maxmem")
+                if p.get("cpu") is None or not total:
+                    continue
+                out.append(
+                    (
+                        f"pve:{n['node']}",
+                        int(p["time"]),
+                        round(p["cpu"] * 100, 1),
+                        round((p.get("memused") or 0) / total * 100, 1),
+                    )
+                )
+        return out
+
     # ── détails à la demande ─────────────────────────────────
     def node_detail(self, node: str, timeframe: str = "hour") -> dict:
         n = self.api.nodes(node)
@@ -147,6 +167,63 @@ class ProxmoxCollector:
         status = getattr(self.api.nodes(node), gtype)(vmid).status
         return getattr(status, action).post()
 
+    def guest_backup(self, node: str, vmid: int, storage: str, mode: str) -> str:
+        """Sauvegarde immédiate (vzdump) d'un invité → UPID."""
+        return self.api.nodes(node).vzdump.post(
+            vmid=vmid, storage=storage, mode=mode, compress="zstd", **{"notes-template": "NovaPanel: {{guestname}}"}
+        )
+
+    # ── réseau ───────────────────────────────────────────────
+    def network(self, guests: list[Guest]) -> dict:
+        interfaces = []
+        for n in self.api.nodes.get():
+            if n.get("status") != "online":
+                continue
+            for i in self.api.nodes(n["node"]).network.get():
+                interfaces.append(normalize_iface(n["node"], i))
+        nics = []
+        for g in guests:
+            if g.type not in ("qemu", "lxc"):
+                continue
+            try:
+                cfg = getattr(self.api.nodes(g.host), g.type)(int(g.id)).config.get()
+            except Exception:  # noqa: BLE001 — invité supprimé entre-temps, droits partiels…
+                continue
+            nics += parse_guest_nics(g, cfg)
+        return {
+            "interfaces": sorted(interfaces, key=lambda i: (i["node"], i["type"] != "bridge", i["iface"])),
+            "guest_nics": nics,
+        }
+
+    # ── sauvegardes ──────────────────────────────────────────
+    def backups(self, storages: list[Storage], guests: list[Guest]) -> dict:
+        api = self.api
+        jobs = [normalize_job(j) for j in api.cluster.backup.get()]
+        try:
+            not_backed = [
+                {"vmid": str(x.get("vmid")), "name": x.get("name", ""), "type": x.get("type", "")}
+                for x in api.cluster("backup-info")("not-backed-up").get()
+            ]
+        except Exception:  # noqa: BLE001 — endpoint absent sur de vieilles versions
+            not_backed = []
+        online = [n["node"] for n in api.nodes.get() if n.get("status") == "online"]
+        files, errors = [], []
+        for st in storages:
+            if st.kind != "proxmox" or "backup" not in st.content or st.status != "available" or not online:
+                continue
+            node = online[0] if st.host == "shared" else st.host
+            try:
+                for f in api.nodes(node).storage(st.name).content.get(content="backup"):
+                    files.append(normalize_backup(st.name, f))
+            except Exception as exc:  # noqa: BLE001
+                errors.append({"storage": st.name, "detail": str(exc)[:200]})
+        return {
+            "jobs": jobs,
+            "files": sorted(files, key=lambda f: f["ctime"], reverse=True),
+            "not_backed_up": not_backed,
+            "errors": errors,
+        }
+
     def task_status(self, node: str, upid: str) -> dict:
         st = self.api.nodes(node).tasks(upid).status.get()
         log_lines = []
@@ -162,6 +239,108 @@ class ProxmoxCollector:
             "exitstatus": st.get("exitstatus", ""),
             "log": log_lines,
         }
+
+
+def _kv(spec: str) -> dict[str, str]:
+    out = {}
+    for part in spec.split(","):
+        k, _, v = part.partition("=")
+        out[k.strip()] = v.strip()
+    return out
+
+
+def normalize_iface(node: str, i: dict) -> dict:
+    return {
+        "node": node,
+        "iface": i.get("iface", ""),
+        "type": i.get("type", ""),
+        "active": bool(i.get("active")),
+        "autostart": bool(i.get("autostart")),
+        "method": i.get("method", ""),
+        "cidr": i.get("cidr") or (f"{i['address']}/{i.get('netmask', '')}" if i.get("address") else ""),
+        "gateway": i.get("gateway", ""),
+        "cidr6": i.get("cidr6", ""),
+        "ports": (i.get("bridge_ports") or i.get("slaves") or i.get("vlan-raw-device") or "").split(),
+        "vlan_aware": bool(i.get("bridge_vlan_aware")),
+        "bond_mode": i.get("bond_mode", ""),
+        "comments": (i.get("comments") or "").strip(),
+    }
+
+
+def parse_guest_nics(g: Guest, cfg: dict) -> list[dict]:
+    nics = []
+    for k, v in sorted(cfg.items()):
+        if not (k.startswith("net") and k[3:].isdigit() and isinstance(v, str)):
+            continue
+        kv = _kv(v)
+        if g.type == "qemu":
+            model = next((m for m in ("virtio", "e1000", "e1000e", "rtl8139", "vmxnet3") if m in kv), "")
+            mac = kv.get(model, "")
+            ip = ""
+            n = int(k[3:])
+            ipcfg = cfg.get(f"ipconfig{n}", "")
+            if ipcfg:
+                ip = _kv(ipcfg).get("ip", "")
+        else:
+            model, mac, ip = "veth", kv.get("hwaddr", ""), kv.get("ip", "")
+        nics.append(
+            {
+                "guest_id": g.id,
+                "guest_name": g.name,
+                "guest_type": g.type,
+                "node": g.host,
+                "status": g.status,
+                "iface": kv.get("name", k) if g.type == "lxc" else k,
+                "model": model,
+                "mac": mac,
+                "bridge": kv.get("bridge", ""),
+                "tag": kv.get("tag", ""),
+                "firewall": kv.get("firewall") == "1",
+                "ip": ip,
+                "rate": kv.get("rate", ""),
+                "link_down": kv.get("link_down") == "1",
+            }
+        )
+    return nics
+
+
+def normalize_job(j: dict) -> dict:
+    if j.get("all"):
+        selection = "all"
+    elif j.get("pool"):
+        selection = f"pool:{j['pool']}"
+    else:
+        selection = str(j.get("vmid", ""))
+    return {
+        "id": j.get("id", ""),
+        "enabled": str(j.get("enabled", 1)) not in ("0", "False", "false"),
+        "schedule": j.get("schedule") or (f"{j.get('dow', '')} {j.get('starttime', '')}".strip()),
+        "next_run": int(j.get("next-run") or 0),
+        "storage": j.get("storage", ""),
+        "selection": selection,
+        "exclude": str(j.get("exclude", "")),
+        "mode": j.get("mode", "snapshot"),
+        "compress": str(j.get("compress", "")),
+        "node": j.get("node", ""),
+        "comment": j.get("comment", ""),
+        "retention": j.get("prune-backups", ""),
+    }
+
+
+def normalize_backup(storage: str, f: dict) -> dict:
+    verification = f.get("verification") or {}
+    return {
+        "volid": f.get("volid", ""),
+        "storage": storage,
+        "vmid": str(f.get("vmid", "")),
+        "type": f.get("subtype") or ("lxc" if "vzdump-lxc" in f.get("volid", "") else "qemu"),
+        "size": int(f.get("size") or 0),
+        "ctime": int(f.get("ctime") or 0),
+        "format": f.get("format", ""),
+        "notes": (f.get("notes") or "").strip(),
+        "protected": bool(f.get("protected")),
+        "verified": verification.get("state", ""),
+    }
 
 
 def rrd_points(rrd: list[dict], mem_key: str = "mem", maxmem_key: str = "maxmem") -> list[dict]:

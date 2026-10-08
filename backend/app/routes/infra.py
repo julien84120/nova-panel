@@ -8,6 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from proxmoxer.core import ResourceException
+from pydantic import BaseModel
 
 from app.audit import AuditLog
 from app.collector import Collector
@@ -145,7 +146,96 @@ def container_logs(cid: str, request: Request, tail: int = Query(200, ge=1, le=2
         raise _source_error(exc) from exc
 
 
+@router.get("/metrics/history")
+def metrics_history(request: Request, range: Literal["hour", "day", "week"] = "hour", host: str | None = None):
+    """Historique CPU / mémoire par hôte (base locale + RRD Proxmox)."""
+    snap = _snapshot(request)
+    hosts = {h.id: h for h in snap.hosts}
+    if host and host not in hosts:
+        raise HTTPException(404, "host_not_found")
+    store = _collector(request).metrics
+    series = store.query(range, host) if store else {}
+    return {
+        "range": range,
+        "hosts": [
+            {"id": hid, "name": hosts[hid].name, "kind": hosts[hid].kind, "points": series.get(hid, [])}
+            for hid in ([host] if host else list(hosts))
+        ],
+    }
+
+
+@router.get("/network")
+def network(request: Request):
+    col = _collector(request)
+    snap = _snapshot(request)
+    if col.proxmox is None and col.docker is None:
+        return {**demo.demo_network(col.settings.docker_display_name), "errors": []}
+    fake = demo.demo_network(col.settings.docker_display_name)
+    result: dict = {"interfaces": [], "guest_nics": [], "docker_networks": [], "errors": []}
+    if col.proxmox is None:
+        result["interfaces"], result["guest_nics"] = fake["interfaces"], fake["guest_nics"]
+    else:
+        try:
+            pve = col.cached("network:pve", 60, lambda: col.proxmox.network(snap.guests))
+            result["interfaces"], result["guest_nics"] = pve["interfaces"], pve["guest_nics"]
+        except Exception as exc:  # noqa: BLE001
+            result["errors"].append({"source": "proxmox", "detail": str(_source_error(exc).detail)})
+    if col.docker is None:
+        result["docker_networks"] = fake["docker_networks"]
+    else:
+        try:
+            result["docker_networks"] = col.cached("network:docker", 60, col.docker.networks)
+        except Exception as exc:  # noqa: BLE001
+            result["errors"].append({"source": "docker", "detail": str(_source_error(exc).detail)})
+    return result
+
+
+@router.get("/backups")
+def backups(request: Request):
+    col = _collector(request)
+    snap = _snapshot(request)
+    if col.proxmox is None:
+        data = demo.demo_backups()
+    else:
+        try:
+            data = col.cached("backups", 60, lambda: col.proxmox.backups(snap.storages, snap.guests))
+        except Exception as exc:  # noqa: BLE001
+            raise _source_error(exc) from exc
+    return {**data, "tasks": [t.model_dump() for t in snap.tasks if t.type == "vzdump"]}
+
+
 # ── Actions ──────────────────────────────────────────────────
+class BackupRequest(BaseModel):
+    storage: str
+    mode: Literal["snapshot", "suspend", "stop"] = "snapshot"
+
+
+@router.post("/proxmox/guests/{node}/{gtype}/{vmid}/backup")
+def guest_backup(node: str, gtype: Literal["qemu", "lxc"], vmid: int, body: BackupRequest, request: Request):
+    _require_actions(request)
+    _check_node(node)
+    g = _find_guest(request, gtype, str(vmid), node)
+    snap = _snapshot(request)
+    if not any(st.name == body.storage and "backup" in st.content and st.status == "available" for st in snap.storages):
+        raise HTTPException(400, "invalid_backup_storage")
+    col, audit_log, user = _collector(request), _audit(request), _user(request)
+    target = f"{'VM' if gtype == 'qemu' else 'CT'} {vmid} ({g.name}) → {body.storage}"
+    try:
+        if col.proxmox is None:
+            upid = demo.demo_backup_now(gtype, str(vmid), node, body.storage, f"{user}@novapanel")
+        else:
+            upid = col.proxmox.guest_backup(node, vmid, body.storage, body.mode)
+    except Exception as exc:  # noqa: BLE001
+        err = _source_error(exc)
+        audit_log.add(user, "proxmox", "backup", target, "error", str(err.detail))
+        raise err from exc
+    audit_log.add(user, "proxmox", "backup", target, "running", ref=upid)
+    log.info("%s: backup %s (tâche %s)", user, target, upid)
+    col.invalidate("backups")
+    col.refresh_soon()
+    return {"upid": upid, "node": node}
+
+
 @router.post("/proxmox/guests/{node}/{gtype}/{vmid}/{action}")
 def guest_action(node: str, gtype: Literal["qemu", "lxc"], vmid: int, action: str, request: Request):
     _require_actions(request)

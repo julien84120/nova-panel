@@ -75,12 +75,10 @@ function Meter({ label, value, hint }: { label: string; value: number; hint: str
     <div className="min-w-0">
       <div className="mb-1.5 flex justify-between gap-2 text-xs">
         <span className="text-muted-foreground">{label}</span>
-        <span className="truncate tabular-nums">
-          <span className="font-medium">{value}%</span>
-          <span className="ml-1 text-muted-foreground">{hint}</span>
-        </span>
+        <span className="font-medium tabular-nums">{value}%</span>
       </div>
       <Progress value={value} indicatorClassName={cn(value >= 85 ? "bg-destructive" : value >= 65 ? "bg-warning" : "")} />
+      <div className="mt-1 truncate text-[11px] text-muted-foreground tabular-nums">{hint}</div>
     </div>
   )
 }
