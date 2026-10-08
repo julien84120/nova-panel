@@ -24,9 +24,11 @@ HISTORY_SECONDS = 3600
 
 
 class Collector:
-    def __init__(self, settings: Settings, metrics: MetricsStore | None = None):
+    def __init__(self, settings: Settings, metrics: MetricsStore | None = None, alerts=None):
         self.settings = settings
         self.metrics = metrics
+        self.alerts = alerts
+        self._extras_at = 0.0
         self._cache: dict[str, tuple[float, object]] = {}
         self.proxmox = ProxmoxCollector(settings) if settings.proxmox_enabled else None
         self.docker = DockerCollector(settings) if settings.docker_enabled else None
@@ -41,6 +43,7 @@ class Collector:
     async def start(self) -> None:
         await asyncio.to_thread(self._seed_history)
         await asyncio.to_thread(self.refresh)
+        await asyncio.to_thread(self.run_alerts)
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
@@ -55,8 +58,40 @@ class Collector:
                 if self.proxmox and not self._history_seeded and time.time() - self._last_seed_attempt > 300:
                     await asyncio.to_thread(self._seed_history)
                 await asyncio.to_thread(self.refresh)
+                await asyncio.to_thread(self.run_alerts)
             except Exception:  # noqa: BLE001 — le collecteur ne doit jamais s'arrêter
                 log.exception("refresh failed")
+
+    # ── alertes ──────────────────────────────────────────────
+    def slow_data(self) -> dict:
+        """Sauvegardes non couvertes et snapshots : coûteux, rafraîchis toutes les 15 min."""
+        snap = self.snapshot
+        out: dict = {}
+        if snap is None:
+            return out
+        try:
+            if self.proxmox is None:
+                out["not_backed_up"] = demo.demo_backups()["not_backed_up"]
+                out["snapshots"] = demo.demo_all_snapshots()
+            else:
+                out["not_backed_up"] = self.cached(
+                    "backups", 60, lambda: self.proxmox.backups(snap.storages, snap.guests)
+                )["not_backed_up"]
+                out["snapshots"] = self.cached("snapshots", 120, lambda: self.proxmox.all_snapshots(snap.guests))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("alert extras unavailable: %s", exc)
+        return out
+
+    def run_alerts(self) -> None:
+        if self.alerts is None or self.snapshot is None:
+            return
+        try:
+            if time.time() - self._extras_at > 900:
+                self.alerts.extras = self.slow_data()
+                self._extras_at = time.time()
+            self.alerts.evaluate(self.snapshot)
+        except Exception:  # noqa: BLE001
+            log.exception("alert evaluation failed")
 
     def cached(self, key: str, ttl: float, fn):
         """Petit cache mémoire pour les lectures coûteuses (réseau, sauvegardes)."""

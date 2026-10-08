@@ -698,3 +698,95 @@ def demo_backup_now(gtype: str, vmid: str, node: str, storage: str, user: str) -
             ),
         )
     return upid
+
+
+# ── snapshots fictifs ────────────────────────────────────────
+_demo_snaps: dict[str, list[dict]] = {}
+
+
+def _init_snaps() -> None:
+    if _demo_snaps:
+        return
+    now = int(time.time())
+    _demo_snaps.update(
+        {
+            "101": [
+                {
+                    "name": "avant-upgrade-k8s",
+                    "description": "Avant passage en 1.31",
+                    "snaptime": now - 42 * 86400,
+                    "vmstate": False,
+                    "parent": "",
+                },
+                {
+                    "name": "post-install",
+                    "description": "",
+                    "snaptime": now - 3 * 86400,
+                    "vmstate": True,
+                    "parent": "avant-upgrade-k8s",
+                },
+            ],
+            "103": [
+                {
+                    "name": "ha-2026-09",
+                    "description": "Home Assistant 2026.9",
+                    "snaptime": now - 12 * 86400,
+                    "vmstate": False,
+                    "parent": "",
+                }
+            ],
+            "205": [
+                {
+                    "name": "pihole-v6",
+                    "description": "Avant Pi-hole v6",
+                    "snaptime": now - 65 * 86400,
+                    "vmstate": False,
+                    "parent": "",
+                }
+            ],
+        }
+    )
+
+
+def demo_snapshots(vmid: str) -> list[dict]:
+    with _lock:
+        _init_snaps()
+        return [dict(s) for s in _demo_snaps.get(vmid, [])]
+
+
+def demo_all_snapshots() -> list[dict]:
+    out = []
+    for vmid, name, gtype, node, *_ in _PVE_GUESTS:
+        for s in demo_snapshots(vmid):
+            out.append({**s, "guest_id": vmid, "guest_name": name, "guest_type": gtype, "node": node})
+    return sorted(out, key=lambda s: s["snaptime"], reverse=True)
+
+
+def demo_snapshot_op(
+    op: str, gtype: str, vmid: str, node: str, user: str, name: str, description: str = "", vmstate: bool = False
+) -> str:
+    ts = int(time.time())
+    with _lock:
+        _init_snaps()
+        lst = _demo_snaps.setdefault(vmid, [])
+        if op == "create":
+            parent = lst[-1]["name"] if lst else ""
+            lst.append({"name": name, "description": description, "snaptime": ts, "vmstate": vmstate, "parent": parent})
+        elif op == "delete":
+            _demo_snaps[vmid] = [s for s in lst if s["name"] != name]
+        prefix = "qm" if gtype == "qemu" else "vz"
+        typ = {"create": f"{prefix}snapshot", "delete": f"{prefix}delsnapshot", "rollback": f"{prefix}rollback"}[op]
+        upid = f"UPID:{node}:DEMO:{ts * 1000:X}:{typ}:{vmid}:{user}:"
+        _demo_tasks.insert(
+            0,
+            Task(
+                id=upid,
+                type=typ,
+                target=f"{'VM' if gtype == 'qemu' else 'CT'} {vmid}",
+                host=node,
+                status="ok",
+                started_at=ts,
+                user=user,
+            ),
+        )
+    return upid

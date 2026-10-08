@@ -64,6 +64,35 @@ export function useActions() {
     [fmt, errorText, pollSoon, trackTask]
   )
 
+  const snapshotOp = useCallback(
+    async (
+      g: Guest,
+      op: "create" | "rollback" | "delete",
+      name: string,
+      opts: { description?: string; vmstate?: boolean } = {}
+    ) => {
+      if (g.type === "docker") return false
+      const action = `snapshot_${op}`
+      const label = `${g.name} @ ${name}`
+      const id = toast.loading(fmt("act.pending", action, label))
+      try {
+        const r =
+          op === "create"
+            ? await api.snapshotCreate(g.host, g.type, g.id, name, opts.description ?? "", !!opts.vmstate)
+            : op === "rollback"
+              ? await api.snapshotRollback(g.host, g.type, g.id, name)
+              : await api.snapshotDelete(g.host, g.type, g.id, name)
+        return (await trackTask(id, r.node, r.upid, action, label, 1800)) ?? false
+      } catch (e) {
+        toast.error(fmt("act.failed", action, label), { id, description: errorText(e) })
+        return false
+      } finally {
+        pollSoon()
+      }
+    },
+    [fmt, errorText, pollSoon, trackTask]
+  )
+
   /** Action Proxmox : lance la tâche, suit son UPID jusqu'à la fin, puis rafraîchit. */
   const guestAction = useCallback(
     async (g: Guest, action: GuestAction) => {
@@ -96,5 +125,5 @@ export function useActions() {
     [fmt, errorText, pollSoon]
   )
 
-  return { guestAction, containerAction, backupGuest }
+  return { guestAction, containerAction, backupGuest, snapshotOp }
 }

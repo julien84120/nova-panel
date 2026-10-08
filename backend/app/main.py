@@ -8,12 +8,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import __version__
+from app.alerts import AlertService
 from app.audit import AuditLog
 from app.auth import COOKIE_NAME, CSRF_HEADER, MIN_PASSWORD_LENGTH, AuthError, AuthService, User
 from app.collector import Collector
 from app.config import get_settings
 from app.db import Database
 from app.metrics import MetricsStore
+from app.routes.alerts import router as alerts_router
 from app.routes.infra import router as infra_router
 from app.schemas import Dashboard, Guest, Host
 
@@ -48,7 +50,8 @@ async def lifespan(app: FastAPI):
     app.state.audit = AuditLog(db)
     if app.state.auth.setup_required():
         _print_setup_banner(app.state.auth)
-    collector = Collector(settings, MetricsStore(db))
+    app.state.alerts = AlertService(db)
+    collector = Collector(settings, MetricsStore(db), app.state.alerts)
     app.state.collector = collector
     await collector.start()
     yield
@@ -233,6 +236,7 @@ def guests(request: Request, type: str | None = None, host: str | None = None):
 
 
 app.include_router(infra_router)
+app.include_router(alerts_router)
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)

@@ -1,6 +1,7 @@
 import { Loader2 } from "lucide-react"
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 
+import { AlertsProvider } from "@/hooks/AlertsProvider"
 import { DashboardProvider } from "@/hooks/DashboardProvider"
 import { useAuth } from "@/hooks/AuthProvider"
 import { useI18n } from "@/i18n/I18nProvider"
@@ -9,7 +10,9 @@ import { navigation } from "@/layout/navigation"
 import { Toaster } from "@/components/ui/sonner"
 import { ComingSoon } from "@/pages/ComingSoon"
 import { Dashboard } from "@/pages/Dashboard"
+import { AlertsPage } from "@/pages/AlertsPage"
 import { BackupsPage } from "@/pages/BackupsPage"
+import { SnapshotsPage } from "@/pages/SnapshotsPage"
 import { DockerPage } from "@/pages/DockerPage"
 import { GuestsPage } from "@/pages/GuestsPage"
 import { NetworkPage } from "@/pages/NetworkPage"
@@ -47,6 +50,7 @@ export default function App() {
 
   return (
     <DashboardProvider>
+      <AlertsProvider>
       <BrowserRouter>
         <Routes>
           <Route element={<Layout />}>
@@ -58,6 +62,8 @@ export default function App() {
             <Route path="/storage" element={<StoragePage />} />
             <Route path="/network" element={<NetworkPage />} />
             <Route path="/backups" element={<BackupsPage />} />
+            <Route path="/snapshots" element={<SnapshotsPage />} />
+            <Route path="/alerts" element={<AlertsPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             {placeholderRoutes.map((item) => (
               <Route key={item.to} path={item.to} element={<ComingSoon title={item.label} />} />
@@ -68,6 +74,7 @@ export default function App() {
         </Routes>
       </BrowserRouter>
       <Toaster />
+      </AlertsProvider>
     </DashboardProvider>
   )
 }

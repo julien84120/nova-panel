@@ -12,6 +12,9 @@ import { useDashboard } from "@/hooks/DashboardProvider"
 import { useI18n } from "@/i18n/I18nProvider"
 import { api } from "@/lib/api"
 import { authErrorMessage } from "@/lib/authErrors"
+import { NotificationSettings } from "@/components/alerts/NotificationSettings"
+import { useQueryParam } from "@/hooks/useQueryParam"
+import { cn } from "@/lib/utils"
 
 export function SettingsPage() {
   const { t } = useI18n()
@@ -24,6 +27,8 @@ export function SettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [tab, setTab] = useQueryParam("tab")
+  const current_tab = tab === "alerts" ? "alerts" : "account"
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -52,6 +57,24 @@ export function SettingsPage() {
         <p className="mt-1 text-sm text-muted-foreground">{t("settings.subtitle")}</p>
       </div>
 
+      <div className="flex w-fit rounded-lg border bg-card/60 p-0.5 text-sm">
+        {(["account", "alerts"] as const).map((k) => (
+          <button
+            key={k}
+            onClick={() => setTab(k === "account" ? "" : k)}
+            className={cn(
+              "rounded-md px-3 py-1 font-medium transition-colors",
+              current_tab === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {t(k === "account" ? "settings.tabAccount" : "settings.tabAlerts")}
+          </button>
+        ))}
+      </div>
+
+      {current_tab === "alerts" ? (
+        <NotificationSettings />
+      ) : (
       <div className="grid gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
@@ -115,6 +138,7 @@ export function SettingsPage() {
           </CardContent>
         </Card>
       </div>
+      )}
     </div>
   )
 }

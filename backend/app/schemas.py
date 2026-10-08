@@ -67,7 +67,7 @@ class AuditEntry(BaseModel):
     id: int
     ts: int
     username: str
-    source: HostKind
+    source: Literal["proxmox", "docker", "novapanel"]
     action: str
     target: str
     status: Literal["ok", "running", "error"]

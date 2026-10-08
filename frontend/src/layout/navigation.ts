@@ -1,5 +1,7 @@
 import {
   Archive,
+  BellRing,
+  Camera,
   Boxes,
   Container,
   HardDrive,
@@ -19,7 +21,7 @@ export interface NavItem {
   label: TranslationKey
   icon: LucideIcon
   /** Compteur dynamique affiché à droite (calculé depuis l'API). */
-  count?: "nodes" | "vms" | "lxc" | "docker"
+  count?: "nodes" | "vms" | "lxc" | "docker" | "alerts"
 }
 
 export interface NavSection {
@@ -47,6 +49,8 @@ export const navigation: NavSection[] = [
     title: "nav.operations",
     items: [
       { to: "/backups", label: "nav.backups", icon: Archive },
+      { to: "/snapshots", label: "nav.snapshots", icon: Camera },
+      { to: "/alerts", label: "nav.alerts", icon: BellRing, count: "alerts" },
       { to: "/tasks", label: "nav.tasks", icon: ListChecks },
     ],
   },

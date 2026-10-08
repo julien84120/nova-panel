@@ -22,7 +22,7 @@
 | 3 | Authentification (Argon2id, sessions, anti-bruteforce), déploiement : `install.sh` (systemd), Docker Compose (+ HTTPS Caddy), releases GitHub | ✅ |
 | 4 | Pages Nœuds, VMs, LXC, Docker (logs), Stockage, Tâches + journal ; actions démarrer/éteindre/redémarrer/forcer l'arrêt… avec confirmation ; recherche globale ⌘K | ✅ |
 | 5 | Historique par hôte persistant (1 h / 24 h / 7 j), graphique « une courbe par machine » ; pages Réseau (interfaces, ponts, VLAN, réseaux Docker) et Sauvegardes (tâches planifiées, couverture, archives, sauvegarde immédiate) | ✅ |
-| 6 | Snapshots, notifications (nœud hors ligne, stockage plein, sauvegarde en échec) | ⏳ |
+| 6 | Snapshots (créer avec ou sans RAM, restaurer avec confirmation tapée, supprimer, vue globale des vieux snapshots) ; alertes (10 règles réglables) et notifications e-mail, Discord, Telegram, ntfy, webhook | ✅ |
 
 ## Stack
 
@@ -164,12 +164,13 @@ PROXMOX_VERIFY_SSL=false   # certificat auto-signé par défaut
 ### 1 bis. Autoriser les actions (démarrer, éteindre, redémarrer…)
 
 Les boutons d'action exigent le privilège **`VM.PowerMgmt`** ; « Sauvegarder maintenant » exige en plus
-**`VM.Backup`** et **`Datastore.AllocateSpace`** (écriture sur le stockage de sauvegarde). On l'ajoute au jeton existant via un rôle dédié,
+**`VM.Backup`** et **`Datastore.AllocateSpace`** (écriture sur le stockage de sauvegarde) ; les snapshots
+**`VM.Snapshot`** (créer / supprimer) et **`VM.Snapshot.Rollback`** (restaurer). On l'ajoute au jeton existant via un rôle dédié,
 sans retirer `PVEAuditor` (les rôles s'additionnent) :
 
 ```bash
-pveum role add NovaPanelOperator --privs "VM.PowerMgmt VM.Backup Datastore.AllocateSpace"
-# (rôle déjà créé en v0.4 ? → pveum role modify NovaPanelOperator --privs "VM.PowerMgmt VM.Backup Datastore.AllocateSpace")
+pveum role add NovaPanelOperator --privs "VM.PowerMgmt VM.Backup VM.Snapshot VM.Snapshot.Rollback Datastore.AllocateSpace"
+# (rôle déjà créé ? → pveum role modify NovaPanelOperator --privs "VM.PowerMgmt VM.Backup VM.Snapshot VM.Snapshot.Rollback Datastore.AllocateSpace")
 pveum acl modify / --users novapanel@pve --roles NovaPanelOperator
 pveum acl modify / --tokens 'novapanel@pve!novapanel' --roles NovaPanelOperator
 
@@ -219,6 +220,18 @@ DOCKER_SSH_HOST=nova-oracle
 DOCKER_DISPLAY_NAME=oracle-docker
 ```
 
+## Alertes et notifications
+
+Les règles sont évaluées à chaque collecte (10 s) : nœud hors ligne, source injoignable, CPU / mémoire élevés
+(avec durée minimale), stockage presque plein (avertissement / critique), stockage indisponible, sauvegarde
+vzdump en échec, conteneur Docker *unhealthy*, invités sans sauvegarde planifiée, vieux snapshots.
+Une alerte est **notifiée une seule fois** à son déclenchement, puis à sa résolution (option).
+
+Canaux (Paramètres → *Alertes et notifications*) : **e-mail SMTP**, **Discord** (webhook), **Telegram** (bot),
+**ntfy** (push mobile) et **webhook JSON** (Home Assistant, n8n, Gotify…), chacun avec une gravité minimale
+et un bouton *Tester*. Les secrets sont stockés dans la base locale (`novapanel.db`, droits 600) et ne sont
+jamais renvoyés au navigateur ; les messages d'erreur n'incluent jamais l'URL d'un webhook.
+
 ## API
 
 | Méthode | Route | Description |
@@ -239,6 +252,13 @@ DOCKER_DISPLAY_NAME=oracle-docker
 | GET | `/api/network` | Interfaces Proxmox, cartes réseau des invités, réseaux Docker |
 | GET | `/api/backups` | Tâches planifiées, archives, invités non couverts |
 | POST | `/api/proxmox/guests/{node}/{qemu\|lxc}/{vmid}/backup` | Sauvegarde immédiate (`{"storage": "...", "mode": "snapshot"}`) |
+| GET | `/api/snapshots` | Tous les snapshots (VMs et LXC) |
+| GET · POST | `/api/proxmox/guests/{node}/{qemu\|lxc}/{vmid}/snapshots` | Lister / créer (`{"name", "description", "vmstate"}`) |
+| POST | `…/snapshots/{name}/rollback` | Restaurer (`{"confirm": "<name>"}` obligatoire) |
+| DELETE | `…/snapshots/{name}` | Supprimer un snapshot |
+| GET | `/api/alerts?state=active\|all` · POST `/api/alerts/{id}/ack` | Alertes actives / historique, acquittement |
+| GET · PUT | `/api/alerts/config` | Règles et canaux de notification (secrets masqués en lecture) |
+| POST | `/api/alerts/channels/{id}/test` · `/api/alerts/evaluate` | Notification de test, réévaluation immédiate |
 
 Un collecteur en tâche de fond interroge les sources toutes les `NOVA_POLL_INTERVAL` secondes (10 par défaut) ;
 les routes lisent le dernier instantané, quel que soit le nombre d'onglets ouverts.

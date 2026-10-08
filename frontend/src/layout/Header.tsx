@@ -17,6 +17,9 @@ import { useNavigate } from "react-router-dom"
 
 import { useAuth } from "@/hooks/AuthProvider"
 import { useDashboard } from "@/hooks/DashboardProvider"
+import { useAlerts } from "@/hooks/AlertsProvider"
+import { SeverityIcon } from "@/components/alerts/SeverityBadge"
+import { timeAgo } from "@/lib/utils"
 import { useTheme } from "@/hooks/useTheme"
 import { useI18n } from "@/i18n/I18nProvider"
 import { cn } from "@/lib/utils"
@@ -121,10 +124,7 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         </Button>
 
         {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative" aria-label={t("header.notifications")}>
-          <Bell />
-          <span className="absolute top-2 right-2 size-2 rounded-full bg-primary ring-2 ring-background" />
-        </Button>
+        <AlertsBell />
 
         {/* Profil */}
         <DropdownMenu>
@@ -153,6 +153,70 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         </DropdownMenu>
       </div>
     </header>
+  )
+}
+
+function AlertsBell() {
+  const { t, lang } = useI18n()
+  const { active, unacked, acknowledge } = useAlerts()
+  const navigate = useNavigate()
+  const critical = active.some((a) => !a.acknowledged && a.severity === "critical")
+  const list = [...active].sort((a, b) => Number(a.acknowledged) - Number(b.acknowledged) || b.started_at - a.started_at).slice(0, 6)
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="relative" aria-label={t("header.notifications")}>
+          <Bell />
+          {unacked > 0 && (
+            <span
+              className={cn(
+                "absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-white ring-2 ring-background tabular-nums",
+                critical ? "bg-destructive" : "bg-warning"
+              )}
+            >
+              {unacked > 9 ? "9+" : unacked}
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80 p-0">
+        <div className="flex items-center justify-between border-b px-3 py-2.5">
+          <span className="text-sm font-medium">{t("nav.alerts")}</span>
+          <span className="text-xs text-muted-foreground">
+            {active.length} {t("alerts.activeShort")}
+          </span>
+        </div>
+        {list.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted-foreground">{t("alerts.noneActive")}</p>}
+        <div className="max-h-80 overflow-y-auto">
+          {list.map((a) => (
+            <div key={a.id} className={cn("flex gap-2.5 border-b px-3 py-2.5 last:border-0", a.acknowledged && "opacity-55")}>
+              <SeverityIcon severity={a.severity} className="mt-0.5 size-4 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm leading-snug font-medium">{a.title}</div>
+                <div className="line-clamp-2 text-xs text-muted-foreground">{a.detail}</div>
+                <div className="mt-0.5 text-[11px] text-muted-foreground">{timeAgo(a.started_at, lang)}</div>
+              </div>
+              {!a.acknowledged && (
+                <button
+                  className="self-start rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  title={t("alerts.ack")}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    acknowledge(a.id)
+                  }}
+                >
+                  <Check className="size-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        <DropdownMenuSeparator className="m-0" />
+        <DropdownMenuItem className="justify-center rounded-none py-2.5 text-primary" onSelect={() => navigate("/alerts")}>
+          {t("alerts.viewAll")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

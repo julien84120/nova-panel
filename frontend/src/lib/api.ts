@@ -220,6 +220,71 @@ export interface BackupsData {
   tasks: Task[]
 }
 
+export interface Snapshot {
+  name: string
+  description: string
+  snaptime: number
+  vmstate: boolean
+  parent: string
+}
+
+export interface GuestSnapshot extends Snapshot {
+  guest_id: string
+  guest_name: string
+  guest_type: "qemu" | "lxc"
+  node: string
+}
+
+export type Severity = "info" | "warning" | "critical"
+
+export interface Alert {
+  id: number
+  key: string
+  rule: string
+  severity: Severity
+  title: string
+  detail: string
+  target: string
+  started_at: number
+  resolved_at: number | null
+  acknowledged: boolean
+  ack_by: string
+}
+
+export type ChannelType = "email" | "discord" | "telegram" | "ntfy" | "webhook"
+
+export interface Channel {
+  id?: string
+  type: ChannelType
+  name: string
+  enabled: boolean
+  min_severity: Severity
+  config: Record<string, string>
+}
+
+export interface AlertRules {
+  node_offline: { enabled: boolean }
+  source_error: { enabled: boolean; minutes: number }
+  cpu: { enabled: boolean; threshold: number; minutes: number }
+  memory: { enabled: boolean; threshold: number; minutes: number }
+  storage: { enabled: boolean; warning: number; critical: number }
+  storage_unavailable: { enabled: boolean; minutes: number }
+  backup_failed: { enabled: boolean }
+  container_unhealthy: { enabled: boolean; minutes: number }
+  uncovered_guests: { enabled: boolean }
+  snapshot_age: { enabled: boolean; days: number }
+}
+
+export interface AlertConfig {
+  lang: "fr" | "en"
+  notify_resolved: boolean
+  public_url: string
+  rules: AlertRules
+  channels: Channel[]
+}
+
+export const SECRET_PLACEHOLDER = "__secret__"
+
 export interface TaskStatusResult {
   upid: string
   running: boolean
@@ -352,6 +417,32 @@ export const api = {
       storage,
       mode,
     }),
+  snapshots: () => request<GuestSnapshot[]>("/api/snapshots"),
+  guestSnapshots: (node: string, type: "qemu" | "lxc", vmid: string) =>
+    request<Snapshot[]>(`/api/proxmox/guests/${encodeURIComponent(node)}/${type}/${encodeURIComponent(vmid)}/snapshots`),
+  snapshotCreate: (node: string, type: "qemu" | "lxc", vmid: string, name: string, description: string, vmstate: boolean) =>
+    post<{ upid: string; node: string }>(`/api/proxmox/guests/${encodeURIComponent(node)}/${type}/${encodeURIComponent(vmid)}/snapshots`, {
+      name,
+      description,
+      vmstate,
+    }),
+  snapshotRollback: (node: string, type: "qemu" | "lxc", vmid: string, name: string) =>
+    post<{ upid: string; node: string }>(
+      `/api/proxmox/guests/${encodeURIComponent(node)}/${type}/${encodeURIComponent(vmid)}/snapshots/${encodeURIComponent(name)}/rollback`,
+      { confirm: name }
+    ),
+  snapshotDelete: (node: string, type: "qemu" | "lxc", vmid: string, name: string) =>
+    request<{ upid: string; node: string }>(
+      `/api/proxmox/guests/${encodeURIComponent(node)}/${type}/${encodeURIComponent(vmid)}/snapshots/${encodeURIComponent(name)}`,
+      { method: "DELETE" }
+    ),
+  alerts: (state: "active" | "all" = "active") => request<Alert[]>(`/api/alerts?state=${state}`),
+  alertAck: (id: number) => post<{ ok: boolean }>(`/api/alerts/${id}/ack`),
+  alertsEvaluate: () => post<Alert[]>("/api/alerts/evaluate"),
+  alertConfig: () => request<AlertConfig>("/api/alerts/config"),
+  saveAlertConfig: (cfg: AlertConfig) =>
+    request<AlertConfig>("/api/alerts/config", { method: "PUT", body: JSON.stringify(cfg) }),
+  testChannel: (id: string) => post<{ ok: boolean }>(`/api/alerts/channels/${encodeURIComponent(id)}/test`),
   containerAction: (id: string, action: ContainerAction) =>
     post<{ ok: boolean }>(`/api/docker/containers/${encodeURIComponent(id)}/${action}`),
   containerLogs: (id: string, tail = 200) =>

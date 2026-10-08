@@ -204,6 +204,102 @@ def backups(request: Request):
     return {**data, "tasks": [t.model_dump() for t in snap.tasks if t.type == "vzdump"]}
 
 
+@router.get("/snapshots")
+def all_snapshots(request: Request):
+    col, snap = _collector(request), _snapshot(request)
+    if col.proxmox is None:
+        return demo.demo_all_snapshots()
+    try:
+        return col.cached("snapshots", 60, lambda: col.proxmox.all_snapshots(snap.guests))
+    except Exception as exc:  # noqa: BLE001
+        raise _source_error(exc) from exc
+
+
+@router.get("/proxmox/guests/{node}/{gtype}/{vmid}/snapshots")
+def guest_snapshots(node: str, gtype: Literal["qemu", "lxc"], vmid: int, request: Request):
+    _check_node(node)
+    _find_guest(request, gtype, str(vmid), node)
+    col = _collector(request)
+    if col.proxmox is None:
+        return demo.demo_snapshots(str(vmid))
+    try:
+        return col.proxmox.snapshots(node, gtype, vmid)
+    except Exception as exc:  # noqa: BLE001
+        raise _source_error(exc) from exc
+
+
+SNAP_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,39}$")
+
+
+class SnapshotCreate(BaseModel):
+    name: str
+    description: str = ""
+    vmstate: bool = False
+
+
+class SnapshotConfirm(BaseModel):
+    confirm: str
+
+
+def _snapshot_op(request: Request, node: str, gtype: str, vmid: int, op: str, name: str, **kw):
+    _require_actions(request)
+    _check_node(node)
+    if not SNAP_RE.match(name):
+        raise HTTPException(400, "invalid_snapshot_name")
+    g = _find_guest(request, gtype, str(vmid), node)
+    col, audit_log, user = _collector(request), _audit(request), _user(request)
+    target = f"{'VM' if gtype == 'qemu' else 'CT'} {vmid} ({g.name}) @ {name}"
+    try:
+        if col.proxmox is None:
+            upid = demo.demo_snapshot_op(op, gtype, str(vmid), node, f"{user}@novapanel", name, **kw)
+        elif op == "create":
+            upid = col.proxmox.snapshot_create(
+                node, gtype, vmid, name, kw.get("description", ""), kw.get("vmstate", False)
+            )
+        elif op == "rollback":
+            upid = col.proxmox.snapshot_rollback(node, gtype, vmid, name)
+        else:
+            upid = col.proxmox.snapshot_delete(node, gtype, vmid, name)
+    except Exception as exc:  # noqa: BLE001
+        err = _source_error(exc)
+        audit_log.add(user, "proxmox", f"snapshot_{op}", target, "error", str(err.detail))
+        raise err from exc
+    audit_log.add(user, "proxmox", f"snapshot_{op}", target, "running", ref=upid)
+    log.info("%s: snapshot %s %s (tâche %s)", user, op, target, upid)
+    col.invalidate("snapshots")
+    col.refresh_soon()
+    return {"upid": upid, "node": node}
+
+
+@router.post("/proxmox/guests/{node}/{gtype}/{vmid}/snapshots")
+def snapshot_create(node: str, gtype: Literal["qemu", "lxc"], vmid: int, body: SnapshotCreate, request: Request):
+    return _snapshot_op(
+        request,
+        node,
+        gtype,
+        vmid,
+        "create",
+        body.name,
+        description=body.description[:500],
+        vmstate=body.vmstate and gtype == "qemu",
+    )
+
+
+@router.post("/proxmox/guests/{node}/{gtype}/{vmid}/snapshots/{name}/rollback")
+def snapshot_rollback(
+    node: str, gtype: Literal["qemu", "lxc"], vmid: int, name: str, body: SnapshotConfirm, request: Request
+):
+    # Opération destructrice : le nom du snapshot doit être retapé
+    if body.confirm != name:
+        raise HTTPException(400, "confirmation_mismatch")
+    return _snapshot_op(request, node, gtype, vmid, "rollback", name)
+
+
+@router.delete("/proxmox/guests/{node}/{gtype}/{vmid}/snapshots/{name}")
+def snapshot_delete(node: str, gtype: Literal["qemu", "lxc"], vmid: int, name: str, request: Request):
+    return _snapshot_op(request, node, gtype, vmid, "delete", name)
+
+
 # ── Actions ──────────────────────────────────────────────────
 class BackupRequest(BaseModel):
     storage: str

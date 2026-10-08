@@ -1,4 +1,4 @@
-import { Archive, FileText, MoreHorizontal } from "lucide-react"
+import { Archive, Camera, FileText, MoreHorizontal } from "lucide-react"
 import { useState } from "react"
 
 import {
@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { BackupDialog } from "@/components/infra/BackupDialog"
+import { CreateSnapshotDialog } from "@/components/infra/SnapshotsSection"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -34,6 +35,7 @@ export function ActionsMenu({ guest, onLogs, align = "end" }: { guest: Guest; on
   const { guestAction, containerAction } = useActions()
   const [pending, setPending] = useState<ActionDef | null>(null)
   const [backupOpen, setBackupOpen] = useState(false)
+  const [snapOpen, setSnapOpen] = useState(false)
   const enabled = data?.actions_enabled ?? true
   const actions = availableActions(guest)
 
@@ -72,6 +74,10 @@ export function ActionsMenu({ guest, onLogs, align = "end" }: { guest: Guest; on
                 <Archive />
                 {t("act.backup")}
               </DropdownMenuItem>
+              <DropdownMenuItem disabled={!enabled} onSelect={() => setSnapOpen(true)}>
+                <Camera />
+                {t("snap.create")}
+              </DropdownMenuItem>
             </>
           )}
           {onLogs && (
@@ -87,6 +93,9 @@ export function ActionsMenu({ guest, onLogs, align = "end" }: { guest: Guest; on
       </DropdownMenu>
 
       <BackupDialog guest={backupOpen ? guest : null} onClose={() => setBackupOpen(false)} />
+      {guest.type !== "docker" && (
+        <CreateSnapshotDialog guest={guest} open={snapOpen} onClose={() => setSnapOpen(false)} onDone={() => {}} />
+      )}
 
       <AlertDialog open={!!pending} onOpenChange={(o) => !o && setPending(null)}>
         <AlertDialogContent onClick={(e) => e.stopPropagation()}>

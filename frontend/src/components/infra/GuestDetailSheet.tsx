@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 
 import { ActionsMenu, QuickActions } from "@/components/infra/ActionsMenu"
 import { GuestStatus, HistoryChart, KeyValue, TimeframeToggle } from "@/components/infra/index"
+import { SnapshotsSection } from "@/components/infra/SnapshotsSection"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
@@ -102,6 +103,8 @@ export function GuestDetailSheet({ guest, onClose }: { guest: Guest | null; onCl
                   )}
                 </div>
               </section>
+
+              {guest.type !== "docker" && <SnapshotsSection key={`${guest.host}-${guest.id}`} guest={guest} />}
 
               {d && (d.disks.length > 0 || d.nets.length > 0) && (
                 <section className="space-y-3">

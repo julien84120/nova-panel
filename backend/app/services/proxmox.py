@@ -173,6 +173,39 @@ class ProxmoxCollector:
             vmid=vmid, storage=storage, mode=mode, compress="zstd", **{"notes-template": "NovaPanel: {{guestname}}"}
         )
 
+    # ── snapshots ────────────────────────────────────────────
+    def _guest(self, node: str, gtype: str, vmid: int):
+        return getattr(self.api.nodes(node), gtype)(vmid)
+
+    def snapshots(self, node: str, gtype: str, vmid: int) -> list[dict]:
+        return [
+            normalize_snapshot(x) for x in self._guest(node, gtype, vmid).snapshot.get() if x.get("name") != "current"
+        ]
+
+    def all_snapshots(self, guests: list[Guest]) -> list[dict]:
+        out = []
+        for g in guests:
+            if g.type not in ("qemu", "lxc"):
+                continue
+            try:
+                for s in self.snapshots(g.host, g.type, int(g.id)):
+                    out.append({**s, "guest_id": g.id, "guest_name": g.name, "guest_type": g.type, "node": g.host})
+            except Exception:  # noqa: BLE001 — invité supprimé, droits partiels…
+                continue
+        return sorted(out, key=lambda s: s["snaptime"], reverse=True)
+
+    def snapshot_create(self, node: str, gtype: str, vmid: int, name: str, description: str, vmstate: bool) -> str:
+        params = {"snapname": name, "description": description}
+        if gtype == "qemu" and vmstate:
+            params["vmstate"] = 1
+        return self._guest(node, gtype, vmid).snapshot.post(**params)
+
+    def snapshot_rollback(self, node: str, gtype: str, vmid: int, name: str) -> str:
+        return self._guest(node, gtype, vmid).snapshot(name).rollback.post()
+
+    def snapshot_delete(self, node: str, gtype: str, vmid: int, name: str) -> str:
+        return self._guest(node, gtype, vmid).snapshot(name).delete()
+
     # ── réseau ───────────────────────────────────────────────
     def network(self, guests: list[Guest]) -> dict:
         interfaces = []
@@ -247,6 +280,16 @@ def _kv(spec: str) -> dict[str, str]:
         k, _, v = part.partition("=")
         out[k.strip()] = v.strip()
     return out
+
+
+def normalize_snapshot(x: dict) -> dict:
+    return {
+        "name": x.get("name", ""),
+        "description": (x.get("description") or "").strip(),
+        "snaptime": int(x.get("snaptime") or 0),
+        "vmstate": bool(x.get("vmstate")),
+        "parent": x.get("parent", ""),
+    }
 
 
 def normalize_iface(node: str, i: dict) -> dict:

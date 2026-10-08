@@ -4,6 +4,7 @@ import { ChevronsLeft, ChevronsRight } from "lucide-react"
 import { NovaLogo } from "@/components/brand/NovaLogo"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useDashboard } from "@/hooks/DashboardProvider"
+import { useAlerts } from "@/hooks/AlertsProvider"
 import { useI18n } from "@/i18n/I18nProvider"
 import { cn } from "@/lib/utils"
 import { navigation, settingsItem, type NavItem } from "./navigation"
@@ -94,12 +95,14 @@ export function Sidebar({ collapsed, onToggle, onNavigate, className }: SidebarP
 function SidebarLink({ item, collapsed, onNavigate }: { item: NavItem; collapsed: boolean; onNavigate?: () => void }) {
   const { t } = useI18n()
   const { data } = useDashboard()
+  const { unacked } = useAlerts()
   const Icon = item.icon
   const counts = {
     nodes: data?.hosts.filter((h) => h.kind === "proxmox").length,
     vms: data?.guests.filter((g) => g.type === "qemu").length,
     lxc: data?.guests.filter((g) => g.type === "lxc").length,
     docker: data?.guests.filter((g) => g.type === "docker").length,
+    alerts: unacked || undefined,
   }
   const badge = item.count ? counts[item.count] : undefined
 
@@ -124,7 +127,12 @@ function SidebarLink({ item, collapsed, onNavigate }: { item: NavItem; collapsed
           <Icon className={cn("size-[18px] shrink-0", isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground")} />
           {!collapsed && <span className="flex-1 truncate">{t(item.label)}</span>}
           {!collapsed && badge !== undefined && (
-            <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
+            <span
+              className={cn(
+                "rounded-md px-1.5 py-0.5 text-[10px] font-medium tabular-nums",
+                item.count === "alerts" ? "bg-destructive/15 text-destructive" : "bg-muted text-muted-foreground"
+              )}
+            >
               {badge}
             </span>
           )}
