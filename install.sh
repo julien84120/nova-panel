@@ -83,10 +83,12 @@ if [ "$UNINSTALL" = 1 ]; then
 fi
 
 # ── Vérifications système ───────────────────────────────────
-. /etc/os-release
-case "${ID}:${VERSION_ID:-}" in
+# Sous-shell : /etc/os-release définit VERSION, qui écraserait notre option --version
+OS_ID="$(. /etc/os-release && echo "${ID:-}:${VERSION_ID:-}")"
+OS_NAME="$(. /etc/os-release && echo "${PRETTY_NAME:-inconnu}")"
+case "$OS_ID" in
   debian:12|debian:13|ubuntu:22.04|ubuntu:24.04|ubuntu:24.10|ubuntu:25.04|ubuntu:25.10) ;;
-  *) warn "système non testé : ${PRETTY_NAME:-inconnu}. On continue quand même." ;;
+  *) warn "système non testé : $OS_NAME. On continue quand même." ;;
 esac
 case "$(uname -m)" in
   x86_64|amd64) NODE_ARCH="x64" ;;

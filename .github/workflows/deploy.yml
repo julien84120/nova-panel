@@ -14,7 +14,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Fresh install
-        run: sudo NOVA_ADMIN_PASSWORD=ci-password-1234 ./install.sh --yes --admin-user ci --port 8080
+        run: |
+          set -o pipefail
+          sudo NOVA_ADMIN_PASSWORD=ci-password-1234 ./install.sh --yes --admin-user ciadmin --port 8080 | tee install.log
+          grep -q "Installation depuis le dossier source" install.log
 
       - name: Smoke tests
         run: |
@@ -23,16 +26,16 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/dashboard)" = 401
           curl -fsS http://127.0.0.1:8080/ | grep -q '<title>NovaPanel</title>'
           curl -fsS -c jar -H 'X-Nova-Request: 1' -H 'Content-Type: application/json' \
-            -d '{"username":"ci","password":"ci-password-1234"}' http://127.0.0.1:8080/api/auth/login
+            -d '{"username":"ciadmin","password":"ci-password-1234"}' http://127.0.0.1:8080/api/auth/login
           curl -fsS -b jar http://127.0.0.1:8080/api/dashboard | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["hosts"], d'
-          sudo novapanel list-users | grep -qx ci
+          sudo novapanel list-users | grep -qx ciadmin
           systemctl show novapanel -p User | grep -q novapanel
 
       - name: Re-run (upgrade path is idempotent)
         run: |
           sudo ./install.sh --yes
           curl -fsS http://127.0.0.1:8080/api/health
-          sudo novapanel list-users | grep -qx ci
+          sudo novapanel list-users | grep -qx ciadmin
 
       - name: Logs on failure
         if: failure()
@@ -60,9 +63,9 @@ jobs:
           docker logs nova 2>&1 | grep -q "jeton d'installation"
           # le processus principal ne tourne pas en root
           test "$(docker exec nova awk '/^Uid:/{print $2}' /proc/1/status)" = 1000
-          echo 'ci-password-1234' | docker exec -i nova novapanel create-admin --username ci --password-stdin
+          echo 'ci-password-1234' | docker exec -i nova novapanel create-admin --username ciadmin --password-stdin
           curl -fsS -c jar -H 'X-Nova-Request: 1' -H 'Content-Type: application/json' \
-            -d '{"username":"ci","password":"ci-password-1234"}' http://127.0.0.1:8080/api/auth/login
+            -d '{"username":"ciadmin","password":"ci-password-1234"}' http://127.0.0.1:8080/api/auth/login
           curl -fsS -b jar http://127.0.0.1:8080/api/dashboard > /dev/null
           docker inspect --format '{{.State.Health.Status}}' nova
       - name: Logs on failure
