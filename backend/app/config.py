@@ -19,6 +19,17 @@ class Settings(BaseSettings):
     nova_demo: bool = False
     # Dossier du frontend compilé (servi par l'API en production)
     nova_static_dir: Path = BACKEND_DIR.parent / "frontend" / "dist"
+    # Données persistantes (base SQLite : comptes et sessions)
+    nova_data_dir: Path = BACKEND_DIR / "data"
+    # Sessions
+    nova_session_days: int = 7
+    nova_session_idle_hours: int = 24
+    # Cookie "Secure" : à activer quand NovaPanel est servi en HTTPS (reverse proxy)
+    nova_cookie_secure: bool = False
+    # Adresses des reverse proxies de confiance (X-Forwarded-For), ex. "127.0.0.1,172.16.0.0/12"
+    nova_trusted_proxies: str = "127.0.0.1"
+    # Documentation interactive /api/docs (désactivée par défaut en production)
+    nova_api_docs: bool = False
 
     proxmox_host: str = ""
     proxmox_port: int = 8006

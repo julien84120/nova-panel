@@ -1,0 +1,8 @@
+# HTTPS sur le réseau local avec l'autorité de certification interne de Caddy.
+# Importez le certificat racine (docker compose exec caddy cat /data/caddy/pki/authorities/local/root.crt)
+# dans vos navigateurs pour supprimer l'avertissement.
+{$NOVA_DOMAIN} {
+	tls internal
+	encode zstd gzip
+	reverse_proxy novapanel:8000
+}

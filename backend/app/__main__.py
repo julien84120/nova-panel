@@ -1,7 +1,5 @@
-import uvicorn
+import sys
 
-from app.config import get_settings
+from app.cli import main
 
-if __name__ == "__main__":
-    s = get_settings()
-    uvicorn.run("app.main:app", host=s.nova_bind_host, port=s.nova_bind_port, proxy_headers=True)
+sys.exit(main())

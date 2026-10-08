@@ -1,6 +1,6 @@
 [project]
 name = "novapanel-backend"
-version = "0.2.0"
+version = "0.3.0"
 description = "NovaPanel API — Proxmox VE + Docker (SSH) dashboard backend"
 readme = "README.md"
 license = "MIT"
@@ -13,7 +13,18 @@ dependencies = [
     "requests>=2.32",
     "docker>=7.1",
     "paramiko>=3.5",
+    "argon2-cffi>=23.1",
 ]
+
+[project.scripts]
+novapanel = "app.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
 
 [dependency-groups]
 dev = ["pytest>=8.3", "httpx>=0.28", "ruff>=0.8"]

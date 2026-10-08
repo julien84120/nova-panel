@@ -1,0 +1,6 @@
+Host nova-oracle
+    HostName 152.70.x.x
+    User ubuntu
+    IdentityFile ~/.ssh/novapanel_ed25519
+    IdentitiesOnly yes
+    ServerAliveInterval 30

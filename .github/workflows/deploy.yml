@@ -1,0 +1,70 @@
+name: Deploy tests
+
+on:
+  push:
+    branches: [main]
+    paths: ["install.sh", "deploy/**", "Dockerfile", "docker-compose.yml", "backend/**", "frontend/**", ".github/workflows/deploy.yml"]
+  pull_request:
+
+jobs:
+  install-sh:
+    name: install.sh (Ubuntu 24.04, systemd)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fresh install
+        run: sudo NOVA_ADMIN_PASSWORD=ci-password-1234 ./install.sh --yes --admin-user ci --port 8080
+
+      - name: Smoke tests
+        run: |
+          set -eux
+          curl -fsS http://127.0.0.1:8080/api/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/dashboard)" = 401
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<title>NovaPanel</title>'
+          curl -fsS -c jar -H 'X-Nova-Request: 1' -H 'Content-Type: application/json' \
+            -d '{"username":"ci","password":"ci-password-1234"}' http://127.0.0.1:8080/api/auth/login
+          curl -fsS -b jar http://127.0.0.1:8080/api/dashboard | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["hosts"], d'
+          sudo novapanel list-users | grep -qx ci
+          systemctl show novapanel -p User | grep -q novapanel
+
+      - name: Re-run (upgrade path is idempotent)
+        run: |
+          sudo ./install.sh --yes
+          curl -fsS http://127.0.0.1:8080/api/health
+          sudo novapanel list-users | grep -qx ci
+
+      - name: Logs on failure
+        if: failure()
+        run: sudo journalctl -u novapanel -n 100 --no-pager
+
+      - name: Uninstall
+        run: |
+          sudo ./install.sh --uninstall --purge
+          ! systemctl is-active --quiet novapanel
+
+  docker:
+    name: Docker image + Compose
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose file is valid
+        run: touch .env && docker compose config --quiet && docker compose --profile https config --quiet
+      - name: Build
+        run: docker build -t novapanel:ci .
+      - name: Run and smoke test
+        run: |
+          set -eux
+          docker run -d --name nova -p 8080:8000 -e NOVA_DEMO=true novapanel:ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/api/health && break; sleep 1; done
+          docker logs nova 2>&1 | grep -q "jeton d'installation"
+          # le processus principal ne tourne pas en root
+          test "$(docker exec nova awk '/^Uid:/{print $2}' /proc/1/status)" = 1000
+          echo 'ci-password-1234' | docker exec -i nova novapanel create-admin --username ci --password-stdin
+          curl -fsS -c jar -H 'X-Nova-Request: 1' -H 'Content-Type: application/json' \
+            -d '{"username":"ci","password":"ci-password-1234"}' http://127.0.0.1:8080/api/auth/login
+          curl -fsS -b jar http://127.0.0.1:8080/api/dashboard > /dev/null
+          docker inspect --format '{{.State.Health.Status}}' nova
+      - name: Logs on failure
+        if: failure()
+        run: docker logs nova

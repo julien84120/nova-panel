@@ -1,0 +1,41 @@
+[Unit]
+Description=NovaPanel — Proxmox & Docker dashboard
+Documentation=https://github.com/julien84120/nova-panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=novapanel
+Group=novapanel
+EnvironmentFile=/etc/novapanel/novapanel.env
+WorkingDirectory=/var/lib/novapanel
+ExecStart=/opt/novapanel/current/backend/.venv/bin/novapanel serve
+Restart=on-failure
+RestartSec=5
+
+# Durcissement
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/novapanel
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

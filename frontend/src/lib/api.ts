@@ -82,15 +82,67 @@ export interface DashboardData {
   history: UsagePoint[]
 }
 
+export interface AuthStatus {
+  setup_required: boolean
+  authenticated: boolean
+  user: { username: string } | null
+  min_password_length: number
+}
+
+export class ApiError extends Error {
+  status: number
+  detail: string
+  retryAfter?: number
+  constructor(status: number, detail: string, retryAfter?: number) {
+    super(detail)
+    this.status = status
+    this.detail = detail
+    this.retryAfter = retryAfter
+  }
+}
+
+/** Événement global émis quand la session a expiré (401). */
+export const UNAUTHORIZED_EVENT = "nova:unauthorized"
+
 const BASE = import.meta.env.VITE_API_URL ?? ""
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: { Accept: "application/json", ...init?.headers } })
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method ?? "GET").toUpperCase()
+  const headers: Record<string, string> = { Accept: "application/json", ...(init.headers as Record<string, string>) }
+  if (method !== "GET") {
+    headers["X-Nova-Request"] = "1" // protection CSRF exigée par l'API
+    if (init.body) headers["Content-Type"] = "application/json"
+  }
+  const res = await fetch(`${BASE}${path}`, { ...init, method, headers, credentials: "same-origin" })
+  if (!res.ok) {
+    let detail = res.statusText
+    let retryAfter: number | undefined
+    try {
+      const body = await res.json()
+      detail = typeof body.detail === "string" ? body.detail : detail
+      retryAfter = body.retry_after
+    } catch {
+      /* corps non JSON */
+    }
+    if (res.status === 401 && !path.startsWith("/api/auth/")) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+    throw new ApiError(res.status, detail, retryAfter)
+  }
   return res.json() as Promise<T>
 }
 
+const post = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) })
+
 export const api = {
   dashboard: () => request<DashboardData>("/api/dashboard"),
-  refresh: () => request<DashboardData>("/api/dashboard/refresh", { method: "POST" }),
+  refresh: () => post<DashboardData>("/api/dashboard/refresh"),
+  auth: {
+    status: () => request<AuthStatus>("/api/auth/status"),
+    login: (username: string, password: string) => post<{ username: string }>("/api/auth/login", { username, password }),
+    setup: (token: string, username: string, password: string) =>
+      post<{ username: string }>("/api/auth/setup", { token, username, password }),
+    logout: () => post<{ ok: boolean }>("/api/auth/logout"),
+    changePassword: (current_password: string, new_password: string) =>
+      post<{ ok: boolean }>("/api/auth/password", { current_password, new_password }),
+  },
 }

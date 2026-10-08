@@ -1,0 +1,67 @@
+# NovaPanel — déploiement Docker Compose
+#
+#   cp backend/.env.example .env        # puis complétez Proxmox / SSH
+#   docker compose up -d --build        # http://<ip>:8080
+#   docker compose logs novapanel       # jeton d'installation au 1er démarrage
+#
+# HTTPS (certificat interne Caddy) : NOVA_DOMAIN=novapanel.lan docker compose --profile https up -d --build
+
+name: novapanel
+
+services:
+  novapanel:
+    image: ghcr.io/julien84120/nova-panel:${NOVA_VERSION:-latest}
+    build:
+      context: .
+      args:
+        VERSION: ${NOVA_VERSION:-dev}
+    container_name: novapanel
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      NOVA_BIND_HOST: 0.0.0.0
+      NOVA_BIND_PORT: 8000
+      NOVA_DATA_DIR: /data
+      # Seul le reverse proxy Caddy (réseau interne ci-dessous) peut fournir X-Forwarded-*
+      NOVA_TRUSTED_PROXIES: 172.31.250.0/24
+    ports:
+      - "${NOVA_LISTEN:-0.0.0.0}:${NOVA_PORT:-8080}:8000"
+    volumes:
+      - novapanel-data:/data
+      - ./deploy/ssh:/ssh:ro
+    networks:
+      - novapanel
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, FOWNER, DAC_OVERRIDE]
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    container_name: novapanel-caddy
+    restart: unless-stopped
+    depends_on: [novapanel]
+    environment:
+      NOVA_DOMAIN: ${NOVA_DOMAIN:-novapanel.lan}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - novapanel
+
+volumes:
+  novapanel-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  novapanel:
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24

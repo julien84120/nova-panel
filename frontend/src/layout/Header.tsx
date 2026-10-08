@@ -12,6 +12,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
+import { useNavigate } from "react-router-dom"
+
+import { useAuth } from "@/hooks/AuthProvider"
 import { useDashboard } from "@/hooks/DashboardProvider"
 import { useTheme } from "@/hooks/useTheme"
 import { useI18n } from "@/i18n/I18nProvider"
@@ -21,6 +24,10 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const { t, lang, setLang } = useI18n()
   const { theme, toggle } = useTheme()
   const { data, error, selectedHost, setSelectedHost } = useDashboard()
+  const { status: auth, logout } = useAuth()
+  const navigate = useNavigate()
+  const username = auth?.user?.username ?? ""
+  const initials = username.slice(0, 2).toUpperCase()
   const hosts = data?.hosts ?? []
 
   const hostLabel = selectedHost === "all" ? t("header.allHosts") : (hosts.find((h) => h.id === selectedHost)?.name ?? "…")
@@ -133,21 +140,21 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           <DropdownMenuTrigger asChild>
             <button className="ml-1 flex items-center gap-2 rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
               <Avatar className="size-8 ring-1 ring-border">
-                <AvatarFallback className="bg-primary/15 text-primary">JU</AvatarFallback>
+                <AvatarFallback className="bg-primary/15 text-primary">{initials}</AvatarFallback>
               </Avatar>
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuLabel className="text-foreground">
-              <div className="text-sm font-medium">Julien</div>
-              <div className="text-xs font-normal text-muted-foreground">admin@pam</div>
+              <div className="text-sm font-medium">{username}</div>
+              <div className="text-xs font-normal text-muted-foreground">{t("header.admin")}</div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => navigate("/settings")}>
               <User />
               {t("header.profile")}
             </DropdownMenuItem>
-            <DropdownMenuItem className="text-destructive focus:text-destructive">
+            <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => logout()}>
               <LogOut className="text-destructive!" />
               {t("header.logout")}
             </DropdownMenuItem>
