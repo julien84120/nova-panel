@@ -6,14 +6,22 @@ import { useAuth } from "@/hooks/AuthProvider"
 import { useI18n } from "@/i18n/I18nProvider"
 import { Layout } from "@/layout/Layout"
 import { navigation } from "@/layout/navigation"
+import { Toaster } from "@/components/ui/sonner"
 import { ComingSoon } from "@/pages/ComingSoon"
 import { Dashboard } from "@/pages/Dashboard"
+import { DockerPage } from "@/pages/DockerPage"
+import { GuestsPage } from "@/pages/GuestsPage"
+import { NodesPage } from "@/pages/NodesPage"
+import { StoragePage } from "@/pages/StoragePage"
+import { TasksPage } from "@/pages/TasksPage"
 import { LoginPage } from "@/pages/LoginPage"
 import { SettingsPage } from "@/pages/SettingsPage"
 import { SetupPage } from "@/pages/SetupPage"
 import { ApiErrorBanner } from "@/components/dashboard/SourceAlerts"
 
-const placeholderRoutes = navigation.flatMap((s) => s.items).filter((i) => i.to !== "/")
+// Sections encore à venir
+const IMPLEMENTED = new Set(["/", "/nodes", "/vms", "/lxc", "/docker", "/storage", "/tasks"])
+const placeholderRoutes = navigation.flatMap((s) => s.items).filter((i) => !IMPLEMENTED.has(i.to))
 
 export default function App() {
   const { status, error } = useAuth()
@@ -41,6 +49,12 @@ export default function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<Dashboard />} />
+            <Route path="/nodes" element={<NodesPage />} />
+            <Route path="/vms" element={<GuestsPage key="qemu" type="qemu" />} />
+            <Route path="/lxc" element={<GuestsPage key="lxc" type="lxc" />} />
+            <Route path="/docker" element={<DockerPage />} />
+            <Route path="/storage" element={<StoragePage />} />
+            <Route path="/tasks" element={<TasksPage />} />
             {placeholderRoutes.map((item) => (
               <Route key={item.to} path={item.to} element={<ComingSoon title={item.label} />} />
             ))}
@@ -49,6 +63,7 @@ export default function App() {
           </Route>
         </Routes>
       </BrowserRouter>
+      <Toaster />
     </DashboardProvider>
   )
 }

@@ -8,10 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import __version__
+from app.audit import AuditLog
 from app.auth import COOKIE_NAME, CSRF_HEADER, MIN_PASSWORD_LENGTH, AuthError, AuthService, User
 from app.collector import Collector
 from app.config import get_settings
 from app.db import Database
+from app.routes.infra import router as infra_router
 from app.schemas import Dashboard, Guest, Host
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -40,7 +42,9 @@ def _print_setup_banner(auth: AuthService) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db = Database(settings.nova_data_dir / "novapanel.db")
+    app.state.settings = settings
     app.state.auth = AuthService(db, settings)
+    app.state.audit = AuditLog(db)
     if app.state.auth.setup_required():
         _print_setup_banner(app.state.auth)
     collector = Collector(settings)
@@ -225,6 +229,9 @@ def guests(request: Request, type: str | None = None, host: str | None = None):
     if host:
         items = [g for g in items if g.host == host]
     return items
+
+
+app.include_router(infra_router)
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)

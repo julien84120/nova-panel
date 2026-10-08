@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import docker
 import paramiko
 
 from app.config import Settings
-from app.schemas import Guest, Host
+from app.schemas import Guest, Host, Storage
 
 log = logging.getLogger("novapanel.docker")
 
@@ -42,10 +44,40 @@ class HostMetrics:
     os: str
 
 
+CONTAINER_ACTIONS = {"start", "stop", "restart", "pause", "unpause"}
+
+
 @dataclass
 class DockerData:
     host: Host | None = None
     guests: list[Guest] = field(default_factory=list)
+    storages: list[Storage] = field(default_factory=list)
+
+
+def parse_ports(attrs: dict) -> list[str]:
+    """{'80/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '8080'}]} → ['8080→80/tcp']"""
+    out: list[str] = []
+    for cport, binds in sorted(((attrs.get("NetworkSettings") or {}).get("Ports") or {}).items()):
+        if not binds:
+            continue
+        for b in binds:
+            hp = b.get("HostPort")
+            ip = b.get("HostIp", "")
+            label = f"{hp}→{cport}" if ip in ("", "0.0.0.0", "::") else f"{ip}:{hp}→{cport}"
+            if hp and label not in out:
+                out.append(label)
+    return out
+
+
+def started_uptime(attrs: dict, now: float) -> int:
+    started = ((attrs.get("State") or {}).get("StartedAt") or "")[:19]
+    if not started or started.startswith("0001"):
+        return 0
+    try:
+        ts = datetime.strptime(started, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC).timestamp()
+    except ValueError:
+        return 0
+    return max(0, int(now - ts))
 
 
 def parse_host_probe(output: str) -> HostMetrics:
@@ -144,9 +176,12 @@ class DockerCollector:
         stats = dict(zip([c.id for c in running], self._pool.map(self._stats, running), strict=True))
 
         guests = []
+        now = time.time()
         for c in containers:
             s = stats.get(c.id) or {}
             mem_used, mem_limit = container_mem(s) if s else (0, 0)
+            attrs = c.attrs or {}
+            state = attrs.get("State") or {}
             guests.append(
                 Guest(
                     id=c.short_id,
@@ -157,6 +192,10 @@ class DockerCollector:
                     cpu=container_cpu_percent(s) if s else 0.0,
                     mem_used=mem_used,
                     mem_total=mem_limit,
+                    uptime=started_uptime(attrs, now) if c.status == "running" else 0,
+                    image=(attrs.get("Config") or {}).get("Image", ""),
+                    ports=parse_ports(attrs),
+                    health=(state.get("Health") or {}).get("Status", ""),
                 )
             )
 
@@ -178,7 +217,35 @@ class DockerCollector:
             containers=len(containers),
             containers_running=len(running),
         )
-        return DockerData(host=host, guests=guests)
+        disk = Storage(
+            id=f"docker:{name}:/",
+            name="/",
+            host=name,
+            kind="docker",
+            type="rootfs",
+            content=["docker"],
+            used=metrics.disk_used,
+            total=metrics.disk_total,
+            status="available",
+        )
+        return DockerData(host=host, guests=guests, storages=[disk])
+
+    # ── actions ──────────────────────────────────────────────
+    def container_action(self, container_id: str, action: str) -> None:
+        if action not in CONTAINER_ACTIONS:
+            raise ValueError("unsupported_action")
+        c = self.client.containers.get(container_id)
+        if action == "stop":
+            c.stop(timeout=15)
+        elif action == "restart":
+            c.restart(timeout=15)
+        else:
+            getattr(c, action)()
+
+    def container_logs(self, container_id: str, tail: int = 200) -> str:
+        c = self.client.containers.get(container_id)
+        raw = c.logs(tail=max(1, min(tail, 2000)), timestamps=True, stdout=True, stderr=True)
+        return raw.decode("utf-8", errors="replace")[-400_000:]
 
     @staticmethod
     def _stats(container) -> dict:

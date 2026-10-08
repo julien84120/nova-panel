@@ -12,6 +12,8 @@ interface DashboardContextValue {
   loading: boolean
   refreshing: boolean
   refresh: () => Promise<void>
+  /** Recharge l'instantané quelques secondes après une action. */
+  pollSoon: () => void
   selectedHost: string
   setSelectedHost: (id: string) => void
 }
@@ -60,11 +62,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const pollSoon = useCallback(() => {
+    for (const ms of [1800, 5500]) window.setTimeout(load, ms)
+  }, [load])
+
   const view = useMemo(() => filterByHost(data, selectedHost), [data, selectedHost])
 
   const value = useMemo(
-    () => ({ data, view, error, loading: !data && !error, refreshing, refresh, selectedHost, setSelectedHost }),
-    [data, view, error, refreshing, refresh, selectedHost]
+    () => ({ data, view, error, loading: !data && !error, refreshing, refresh, pollSoon, selectedHost, setSelectedHost }),
+    [data, view, error, refreshing, refresh, pollSoon, selectedHost]
   )
   return <DashboardContext.Provider value={value}>{children}</DashboardContext.Provider>
 }
@@ -90,6 +96,7 @@ function filterByHost(data: DashboardData | null, hostId: string): DashboardData
     hosts: [host],
     guests,
     tasks: data.tasks.filter((t) => t.host === host.name),
+    storages: data.storages.filter((st) => st.host === host.name || (st.shared && host.kind === "proxmox")),
   }
 }
 

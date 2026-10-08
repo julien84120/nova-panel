@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_agent  TEXT
 );
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
+CREATE TABLE IF NOT EXISTS audit_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        INTEGER NOT NULL,
+    username  TEXT NOT NULL,
+    source    TEXT NOT NULL,
+    action    TEXT NOT NULL,
+    target    TEXT NOT NULL,
+    status    TEXT NOT NULL,
+    detail    TEXT NOT NULL DEFAULT '',
+    ref       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS audit_ts ON audit_log(ts);
 """
 
 

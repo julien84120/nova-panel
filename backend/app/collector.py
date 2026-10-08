@@ -13,7 +13,7 @@ import time
 from collections import deque
 
 from app.config import Settings
-from app.schemas import Dashboard, Guest, Host, SourceStatus, Summary, Task, UsagePoint
+from app.schemas import Dashboard, Guest, Host, SourceStatus, Storage, Summary, Task, UsagePoint
 from app.services import demo
 from app.services.docker_host import DockerCollector
 from app.services.proxmox import ProxmoxCollector
@@ -79,12 +79,26 @@ class Collector:
             self.history.clear()
             self.history.extend(merged[t] for t in sorted(merged))
 
+    def refresh_soon(self, delays: tuple[float, ...] = (1.5, 5.0)) -> None:
+        """Rafraîchit l'instantané peu après une action (le temps que l'état change côté source)."""
+
+        def run():
+            for d in delays:
+                time.sleep(d)
+                try:
+                    self.refresh()
+                except Exception:  # noqa: BLE001
+                    log.exception("deferred refresh failed")
+
+        threading.Thread(target=run, daemon=True, name="refresh-soon").start()
+
     # ── collecte ─────────────────────────────────────────────
     def refresh(self) -> Dashboard:
         with self._lock:
             hosts: list[Host] = []
             guests: list[Guest] = []
             tasks: list[Task] = []
+            storages: list[Storage] = []
             sources: list[SourceStatus] = []
             storage_used = storage_total = 0
 
@@ -94,6 +108,7 @@ class Collector:
                     hosts += d.hosts
                     guests += d.guests
                     tasks += d.tasks
+                    storages += d.storages
                     storage_used, storage_total = d.storage_used, d.storage_total
                     sources.append(SourceStatus(name=self.settings.proxmox_host, kind="proxmox", mode="live"))
                 except Exception as exc:  # noqa: BLE001
@@ -102,11 +117,12 @@ class Collector:
                         SourceStatus(name=self.settings.proxmox_host, kind="proxmox", mode="error", detail=_short(exc))
                     )
             else:
-                h, g, t, su, st = demo.demo_proxmox()
-                hosts += h
-                guests += g
-                tasks += t
-                storage_used, storage_total = su, st
+                d = demo.demo_proxmox()
+                hosts += d.hosts
+                guests += d.guests
+                tasks += d.tasks
+                storages += d.storages
+                storage_used, storage_total = d.storage_used, d.storage_total
                 sources.append(SourceStatus(name="Proxmox", kind="proxmox", mode="demo"))
 
             name = self.settings.docker_display_name
@@ -118,16 +134,18 @@ class Collector:
                         storage_used += d.host.disk_used
                         storage_total += d.host.disk_total
                     guests += d.guests
+                    storages += d.storages
                     sources.append(SourceStatus(name=name, kind="docker", mode="live"))
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Docker/SSH: %s", exc)
                     sources.append(SourceStatus(name=name, kind="docker", mode="error", detail=_short(exc)))
             else:
-                h, g = demo.demo_docker(name)
-                hosts.append(h)
-                guests += g
-                storage_used += h.disk_used
-                storage_total += h.disk_total
+                d = demo.demo_docker(name)
+                hosts.append(d.host)
+                guests += d.guests
+                storages += d.storages
+                storage_used += d.host.disk_used
+                storage_total += d.host.disk_total
                 sources.append(SourceStatus(name=name, kind="docker", mode="demo"))
 
             online = [h for h in hosts if h.status != "offline"]
@@ -159,8 +177,10 @@ class Collector:
                 summary=summary,
                 hosts=hosts,
                 guests=sorted(guests, key=lambda g: g.cpu, reverse=True),
-                tasks=sorted(tasks, key=lambda t: t.started_at, reverse=True)[:8],
+                tasks=sorted(tasks, key=lambda t: t.started_at, reverse=True)[:50],
+                storages=storages,
                 history=list(self.history),
+                actions_enabled=self.settings.nova_actions,
             )
             return self.snapshot
 

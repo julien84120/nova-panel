@@ -215,6 +215,8 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "# Mettre true si NovaPanel est servi en HTTPS derrière un reverse proxy"
     echo "NOVA_COOKIE_SECURE=false"
     echo "NOVA_TRUSTED_PROXIES=127.0.0.1"
+    echo "# Boutons d'action (nécessite le privilège VM.PowerMgmt sur le jeton Proxmox)"
+    echo "NOVA_ACTIONS=true"
     echo
     echo "# ── Proxmox VE (jeton API lecture seule, rôle PVEAuditor) ──"
     echo "PROXMOX_HOST="

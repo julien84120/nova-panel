@@ -35,7 +35,103 @@ export interface Guest {
   mem_used: number
   mem_total: number
   uptime: number
+  cores: number
+  disk_total: number
+  tags: string[]
+  image: string
+  ports: string[]
+  health: string
 }
+
+export interface Storage {
+  id: string
+  name: string
+  host: string
+  kind: HostKind
+  type: string
+  content: string[]
+  shared: boolean
+  used: number
+  total: number
+  status: "available" | "unavailable"
+}
+
+export interface AuditEntry {
+  id: number
+  ts: number
+  username: string
+  source: HostKind
+  action: string
+  target: string
+  status: TaskStatus
+  detail: string
+}
+
+export interface HistoryPoint {
+  t: number
+  cpu: number
+  memory: number
+  netin: number
+  netout: number
+}
+
+export type Timeframe = "hour" | "day" | "week" | "month"
+
+export interface NodeDetail {
+  node: string
+  pveversion: string
+  kversion: string
+  cpu_model: string
+  sockets: number
+  cores: number
+  threads: number
+  loadavg: number[]
+  cpu: number
+  iowait: number
+  mem_used: number
+  mem_total: number
+  swap_used: number
+  swap_total: number
+  rootfs_used: number
+  rootfs_total: number
+  uptime: number
+  history: HistoryPoint[]
+}
+
+export interface GuestDetail {
+  vmid: number
+  type: "qemu" | "lxc"
+  node: string
+  name: string
+  status: string
+  qmpstatus: string
+  cpu: number
+  cpus: number
+  mem_used: number
+  mem_total: number
+  disk_total: number
+  uptime: number
+  ha: boolean
+  agent: boolean
+  ostype: string
+  description: string
+  tags: string[]
+  onboot: boolean
+  disks: { id: string; spec: string }[]
+  nets: { id: string; spec: string }[]
+  history: HistoryPoint[]
+}
+
+export interface TaskStatusResult {
+  upid: string
+  running: boolean
+  ok: boolean | null
+  exitstatus: string
+  log: string[]
+}
+
+export type GuestAction = "start" | "shutdown" | "stop" | "reboot" | "suspend" | "resume"
+export type ContainerAction = "start" | "stop" | "restart" | "pause" | "unpause"
 
 export interface Task {
   id: string
@@ -79,7 +175,9 @@ export interface DashboardData {
   hosts: Host[]
   guests: Guest[]
   tasks: Task[]
+  storages: Storage[]
   history: UsagePoint[]
+  actions_enabled: boolean
 }
 
 export interface AuthStatus {
@@ -136,6 +234,19 @@ const post = <T>(path: string, body?: unknown) =>
 export const api = {
   dashboard: () => request<DashboardData>("/api/dashboard"),
   refresh: () => post<DashboardData>("/api/dashboard/refresh"),
+  audit: (limit = 100) => request<AuditEntry[]>(`/api/audit?limit=${limit}`),
+  nodeDetail: (node: string, tf: Timeframe = "hour") =>
+    request<NodeDetail>(`/api/proxmox/nodes/${encodeURIComponent(node)}?timeframe=${tf}`),
+  guestDetail: (node: string, type: "qemu" | "lxc", vmid: string, tf: Timeframe = "hour") =>
+    request<GuestDetail>(`/api/proxmox/guests/${encodeURIComponent(node)}/${type}/${encodeURIComponent(vmid)}?timeframe=${tf}`),
+  guestAction: (node: string, type: "qemu" | "lxc", vmid: string, action: GuestAction) =>
+    post<{ upid: string; node: string }>(`/api/proxmox/guests/${encodeURIComponent(node)}/${type}/${encodeURIComponent(vmid)}/${action}`),
+  taskStatus: (node: string, upid: string) =>
+    request<TaskStatusResult>(`/api/proxmox/task?node=${encodeURIComponent(node)}&upid=${encodeURIComponent(upid)}`),
+  containerAction: (id: string, action: ContainerAction) =>
+    post<{ ok: boolean }>(`/api/docker/containers/${encodeURIComponent(id)}/${action}`),
+  containerLogs: (id: string, tail = 200) =>
+    request<{ id: string; name: string; logs: string }>(`/api/docker/containers/${encodeURIComponent(id)}/logs?tail=${tail}`),
   auth: {
     status: () => request<AuthStatus>("/api/auth/status"),
     login: (username: string, password: string) => post<{ username: string }>("/api/auth/login", { username, password }),

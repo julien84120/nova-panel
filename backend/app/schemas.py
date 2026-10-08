@@ -41,6 +41,37 @@ class Guest(BaseModel):
     mem_used: int
     mem_total: int
     uptime: int = 0
+    cores: float = 0  # vCPU alloués (Proxmox) ; 0 si inconnu
+    disk_total: int = 0
+    tags: list[str] = []
+    # Docker
+    image: str = ""
+    ports: list[str] = []
+    health: str = ""  # healthy / unhealthy / starting / ""
+
+
+class Storage(BaseModel):
+    id: str
+    name: str
+    host: str  # nœud, "shared" ou nom de l'hôte Docker
+    kind: HostKind
+    type: str  # dir, lvmthin, zfspool, nfs, cifs, pbs, rootfs…
+    content: list[str] = []
+    shared: bool = False
+    used: int
+    total: int
+    status: Literal["available", "unavailable"]
+
+
+class AuditEntry(BaseModel):
+    id: int
+    ts: int
+    username: str
+    source: HostKind
+    action: str
+    target: str
+    status: Literal["ok", "running", "error"]
+    detail: str = ""
 
 
 class Task(BaseModel):
@@ -85,4 +116,6 @@ class Dashboard(BaseModel):
     hosts: list[Host]
     guests: list[Guest]
     tasks: list[Task]
+    storages: list[Storage] = []
     history: list[UsagePoint]
+    actions_enabled: bool = True

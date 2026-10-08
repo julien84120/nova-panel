@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     nova_cookie_secure: bool = False
     # Adresses des reverse proxies de confiance (X-Forwarded-For), ex. "127.0.0.1,172.16.0.0/12"
     nova_trusted_proxies: str = "127.0.0.1"
+    # Boutons d'action (démarrer/arrêter…). Les droits réels restent ceux du jeton Proxmox / de l'utilisateur SSH.
+    nova_actions: bool = True
     # Documentation interactive /api/docs (désactivée par défaut en production)
     nova_api_docs: bool = False
 

@@ -1,4 +1,5 @@
-import { Bell, Check, ChevronDown, Languages, LogOut, Menu, Moon, Search, Server, Sun, User } from "lucide-react"
+import { Bell, Boxes, Check, ChevronDown, Container, Languages, LogOut, Menu, Monitor, Moon, Search, Server, Sun, User } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -44,18 +45,8 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         <Menu />
       </Button>
 
-      {/* Recherche */}
-      <div className="relative hidden max-w-md flex-1 md:block">
-        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-        <input
-          type="search"
-          placeholder={t("header.search")}
-          className="h-9 w-full rounded-lg border border-input bg-card/60 pr-14 pl-9 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
-        />
-        <kbd className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-          ⌘K
-        </kbd>
-      </div>
+      {/* Recherche globale */}
+      <GlobalSearch />
 
       <div className="ml-auto flex items-center gap-1.5">
         {(data || error) && (
@@ -162,5 +153,111 @@ export function Header({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         </DropdownMenu>
       </div>
     </header>
+  )
+}
+
+const GUEST_ROUTES = { qemu: "/vms", lxc: "/lxc", docker: "/docker" } as const
+const GUEST_ICONS = { qemu: Monitor, lxc: Boxes, docker: Container } as const
+
+function GlobalSearch() {
+  const { t } = useI18n()
+  const { data } = useDashboard()
+  const navigate = useNavigate()
+  const [q, setQ] = useState("")
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(0)
+  const input = useRef<HTMLInputElement>(null)
+
+  // Raccourci ⌘K / Ctrl+K
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault()
+        input.current?.focus()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  const results = useMemo(() => {
+    const term = q.trim().toLowerCase()
+    if (!term || !data) return []
+    const guests = data.guests
+      .filter((g) => [g.name, g.id, g.image, ...g.tags].some((v) => v?.toLowerCase().includes(term)))
+      .slice(0, 7)
+      .map((g) => ({
+        key: `${g.type}-${g.host}-${g.id}`,
+        icon: GUEST_ICONS[g.type],
+        label: g.name,
+        sub: `${g.type === "qemu" ? "VM " + g.id : g.type === "lxc" ? "CT " + g.id : "Docker"} · ${g.host}`,
+        to: `${GUEST_ROUTES[g.type]}?q=${encodeURIComponent(g.name)}`,
+      }))
+    const hosts = data.hosts
+      .filter((h) => h.name.toLowerCase().includes(term))
+      .map((h) => ({ key: h.id, icon: Server, label: h.name, sub: h.os, to: h.kind === "proxmox" ? "/nodes" : "/docker" }))
+    return [...hosts, ...guests].slice(0, 8)
+  }, [q, data])
+
+  const go = (to: string) => {
+    navigate(to)
+    setQ("")
+    setOpen(false)
+    input.current?.blur()
+  }
+
+  return (
+    <div className="relative hidden max-w-md flex-1 md:block">
+      <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+      <input
+        ref={input}
+        type="search"
+        value={q}
+        onChange={(e) => {
+          setQ(e.target.value)
+          setOpen(true)
+          setActive(0)
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault()
+            setActive((a) => Math.min(a + 1, results.length - 1))
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault()
+            setActive((a) => Math.max(a - 1, 0))
+          } else if (e.key === "Enter" && results[active]) {
+            go(results[active].to)
+          } else if (e.key === "Escape") {
+            setOpen(false)
+            input.current?.blur()
+          }
+        }}
+        placeholder={t("header.search")}
+        className="h-9 w-full rounded-lg border border-input bg-card/60 pr-14 pl-9 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30"
+      />
+      <kbd className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+        ⌘K
+      </kbd>
+      {open && q.trim() && (
+        <div className="absolute top-11 right-0 left-0 z-50 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg">
+          {results.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">{t("common.noResults")}</div>}
+          {results.map((r, i) => (
+            <button
+              key={r.key}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => go(r.to)}
+              onMouseEnter={() => setActive(i)}
+              className={cn("flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm", i === active && "bg-accent")}
+            >
+              <r.icon className="size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate font-medium">{r.label}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{r.sub}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

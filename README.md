@@ -20,7 +20,8 @@
 | 1 | Fondation frontend : Vite, Tailwind v4, shadcn/ui, Layout (sidebar + header), dashboard, FR/EN, thème sombre/clair | ✅ |
 | 2 | Backend FastAPI : Proxmox (`proxmoxer`, jeton API lecture seule) + Docker via SSH (`docker`, `paramiko`), dashboard branché sur l'API, mode démo automatique | ✅ |
 | 3 | Authentification (Argon2id, sessions, anti-bruteforce), déploiement : `install.sh` (systemd), Docker Compose (+ HTTPS Caddy), releases GitHub | ✅ |
-| 4 | Pages VMs / LXC / Docker / stockage / réseau, actions (start/stop…) | ⏳ |
+| 4 | Pages Nœuds, VMs, LXC, Docker (logs), Stockage, Tâches + journal ; actions démarrer/éteindre/redémarrer/forcer l'arrêt… avec confirmation ; recherche globale ⌘K | ✅ |
+| 5 | Réseau, sauvegardes (vzdump/PBS), snapshots, notifications | ⏳ |
 
 ## Stack
 
@@ -159,6 +160,27 @@ PROXMOX_TOKEN_SECRET=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 PROXMOX_VERIFY_SSL=false   # certificat auto-signé par défaut
 ```
 
+### 1 bis. Autoriser les actions (démarrer, éteindre, redémarrer…)
+
+Les boutons d'action exigent le privilège **`VM.PowerMgmt`**. On l'ajoute au jeton existant via un rôle dédié,
+sans retirer `PVEAuditor` (les rôles s'additionnent) :
+
+```bash
+pveum role add NovaPanelOperator --privs "VM.PowerMgmt"
+pveum acl modify / --users novapanel@pve --roles NovaPanelOperator
+pveum acl modify / --tokens 'novapanel@pve!novapanel' --roles NovaPanelOperator
+
+# Vérification : VM.PowerMgmt doit apparaître
+pveum user token permissions novapanel@pve novapanel --path /vms
+```
+
+> Pour limiter les actions à certains invités, remplacez `/` par `/vms/<vmid>` ou par un pool (`/pool/<nom>`).
+> Sans ce rôle, les boutons renvoient « permission refusée » et rien n'est modifié.
+> Pour masquer complètement les actions : `NOVA_ACTIONS=false` dans la configuration.
+
+Côté Docker, les actions (démarrer, arrêter, redémarrer, pause) et les logs utilisent la même connexion SSH.
+Chaque action est enregistrée dans le **journal NovaPanel** (page Tâches) : qui, quoi, quand, résultat.
+
 ### 2. Serveur Ubuntu / Docker via SSH (ex. instance Oracle Cloud)
 
 NovaPanel utilise **un alias SSH** défini dans `~/.ssh/config` de l'utilisateur qui exécute le backend : le SDK Docker (`ssh://alias`) et la sonde de métriques (paramiko) lisent la même configuration.
@@ -203,6 +225,13 @@ DOCKER_DISPLAY_NAME=oracle-docker
 | POST | `/api/dashboard/refresh` | Force une collecte immédiate |
 | GET | `/api/hosts` | Nœuds Proxmox + hôtes Docker |
 | GET | `/api/guests?type=qemu\|lxc\|docker&host=` | VMs, conteneurs LXC et Docker |
+| GET | `/api/storages` · `/api/tasks` · `/api/audit` | Stockages, tâches Proxmox, journal des actions |
+| GET | `/api/proxmox/nodes/{node}?timeframe=hour\|day\|week\|month` | Détail d'un nœud + historique RRD |
+| GET | `/api/proxmox/guests/{node}/{qemu\|lxc}/{vmid}` | Détail d'un invité (config, disques, réseau, RRD) |
+| POST | `/api/proxmox/guests/{node}/{qemu\|lxc}/{vmid}/{start\|shutdown\|stop\|reboot\|suspend\|resume}` | Action → UPID |
+| GET | `/api/proxmox/task?node=&upid=` | Suivi d'une tâche Proxmox |
+| POST | `/api/docker/containers/{id}/{start\|stop\|restart\|pause\|unpause}` | Action Docker |
+| GET | `/api/docker/containers/{id}/logs?tail=200` | Logs d'un conteneur |
 
 Un collecteur en tâche de fond interroge les sources toutes les `NOVA_POLL_INTERVAL` secondes (10 par défaut) ;
 les routes lisent le dernier instantané, quel que soit le nombre d'onglets ouverts.

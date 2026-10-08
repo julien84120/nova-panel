@@ -1,17 +1,28 @@
-"""Collecte Proxmox VE via proxmoxer (jeton API, lecture seule)."""
+"""Collecte et actions Proxmox VE via proxmoxer (jeton API)."""
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
 from proxmoxer import ProxmoxAPI
 
 from app.config import Settings
-from app.schemas import Guest, Host, Task, UsagePoint
+from app.schemas import Guest, Host, Storage, Task, UsagePoint
 
 log = logging.getLogger("novapanel.proxmox")
+
+GUEST_ACTIONS = {
+    "qemu": {"start", "shutdown", "stop", "reboot", "suspend", "resume"},
+    "lxc": {"start", "shutdown", "stop", "reboot"},
+}
+NODE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$")
+
+
+def valid_upid(upid: str) -> bool:
+    return upid.startswith("UPID:") and len(upid) < 256 and "/" not in upid and ".." not in upid
 
 
 @dataclass
@@ -19,6 +30,7 @@ class ProxmoxData:
     hosts: list[Host] = field(default_factory=list)
     guests: list[Guest] = field(default_factory=list)
     tasks: list[Task] = field(default_factory=list)
+    storages: list[Storage] = field(default_factory=list)
     storage_used: int = 0
     storage_total: int = 0
 
@@ -48,6 +60,7 @@ class ProxmoxCollector:
             )
         return self._api
 
+    # ── collecte périodique ──────────────────────────────────
     def collect(self) -> ProxmoxData:
         api = self.api
         resources = api.cluster.resources.get()
@@ -92,13 +105,124 @@ class ProxmoxCollector:
             )
         return points
 
+    # ── détails à la demande ─────────────────────────────────
+    def node_detail(self, node: str, timeframe: str = "hour") -> dict:
+        n = self.api.nodes(node)
+        st = n.status.get()
+        rrd = n.rrddata.get(timeframe=timeframe, cf="AVERAGE")
+        cpuinfo = st.get("cpuinfo", {})
+        return {
+            "node": node,
+            "pveversion": st.get("pveversion", ""),
+            "kversion": st.get("kversion", ""),
+            "cpu_model": cpuinfo.get("model", ""),
+            "sockets": cpuinfo.get("sockets", 0),
+            "cores": cpuinfo.get("cores", 0),
+            "threads": cpuinfo.get("cpus", 0),
+            "loadavg": [float(x) for x in st.get("loadavg", [])],
+            "cpu": round((st.get("cpu") or 0) * 100, 1),
+            "iowait": round((st.get("wait") or 0) * 100, 1),
+            "mem_used": st.get("memory", {}).get("used", 0),
+            "mem_total": st.get("memory", {}).get("total", 0),
+            "swap_used": st.get("swap", {}).get("used", 0),
+            "swap_total": st.get("swap", {}).get("total", 0),
+            "rootfs_used": st.get("rootfs", {}).get("used", 0),
+            "rootfs_total": st.get("rootfs", {}).get("total", 0),
+            "uptime": st.get("uptime", 0),
+            "history": rrd_points(rrd, mem_key="memused", maxmem_key="memtotal"),
+        }
+
+    def guest_detail(self, node: str, gtype: str, vmid: int, timeframe: str = "hour") -> dict:
+        g = getattr(self.api.nodes(node), gtype)(vmid)
+        st = g.status.current.get()
+        cfg = g.config.get()
+        rrd = g.rrddata.get(timeframe=timeframe, cf="AVERAGE")
+        return build_guest_detail(gtype, vmid, node, st, cfg, rrd)
+
+    # ── actions ──────────────────────────────────────────────
+    def guest_action(self, node: str, gtype: str, vmid: int, action: str) -> str:
+        """Lance l'action et renvoie l'UPID de la tâche Proxmox."""
+        if action not in GUEST_ACTIONS.get(gtype, set()):
+            raise ValueError("unsupported_action")
+        status = getattr(self.api.nodes(node), gtype)(vmid).status
+        return getattr(status, action).post()
+
+    def task_status(self, node: str, upid: str) -> dict:
+        st = self.api.nodes(node).tasks(upid).status.get()
+        log_lines = []
+        if st.get("status") == "stopped":
+            try:
+                log_lines = [x.get("t", "") for x in self.api.nodes(node).tasks(upid).log.get(limit=50)]
+            except Exception:  # noqa: BLE001
+                pass
+        return {
+            "upid": upid,
+            "running": st.get("status") == "running",
+            "ok": st.get("exitstatus") == "OK" if st.get("status") == "stopped" else None,
+            "exitstatus": st.get("exitstatus", ""),
+            "log": log_lines,
+        }
+
+
+def rrd_points(rrd: list[dict], mem_key: str = "mem", maxmem_key: str = "maxmem") -> list[dict]:
+    out = []
+    for p in rrd:
+        if p.get("cpu") is None:
+            continue
+        maxmem = p.get(maxmem_key) or 0
+        out.append(
+            {
+                "t": int(p["time"]),
+                "cpu": round(p["cpu"] * 100, 1),
+                "memory": round((p.get(mem_key) or 0) / maxmem * 100, 1) if maxmem else 0,
+                "netin": round(p.get("netin") or 0),
+                "netout": round(p.get("netout") or 0),
+            }
+        )
+    return out
+
+
+def build_guest_detail(gtype: str, vmid: int, node: str, st: dict, cfg: dict, rrd: list[dict]) -> dict:
+    disks, nets = [], []
+    for k, v in sorted(cfg.items()):
+        if not isinstance(v, str):
+            continue
+        if re.match(r"^(scsi|virtio|sata|ide|efidisk|tpmstate)\d+$|^rootfs$|^mp\d+$", k) and "media=cdrom" not in v:
+            disks.append({"id": k, "spec": v})
+        elif re.match(r"^net\d+$", k):
+            nets.append({"id": k, "spec": v})
+    running = st.get("status") == "running"
+    return {
+        "vmid": vmid,
+        "type": gtype,
+        "node": node,
+        "name": st.get("name") or cfg.get("name") or cfg.get("hostname") or str(vmid),
+        "status": st.get("status", "unknown"),
+        "qmpstatus": st.get("qmpstatus", ""),
+        "cpu": round((st.get("cpu") or 0) * 100, 1) if running else 0,
+        "cpus": st.get("cpus") or cfg.get("cores") or 0,
+        "mem_used": st.get("mem", 0) if running else 0,
+        "mem_total": st.get("maxmem", 0),
+        "disk_total": st.get("maxdisk", 0),
+        "uptime": st.get("uptime", 0),
+        "ha": (st.get("ha") or {}).get("managed", 0) == 1,
+        "agent": bool(cfg.get("agent", "0").startswith("1")) if isinstance(cfg.get("agent"), str) else False,
+        "ostype": cfg.get("ostype", ""),
+        "description": cfg.get("description", ""),
+        "tags": [t for t in re.split(r"[;, ]", cfg.get("tags", "")) if t],
+        "onboot": str(cfg.get("onboot", "0")) == "1",
+        "disks": disks,
+        "nets": nets,
+        "history": rrd_points(rrd),
+    }
+
 
 def build_proxmox_data(resources: list[dict], tasks_raw: list[dict], version_of, address: str) -> ProxmoxData:
     """Transforme /cluster/resources et /cluster/tasks en modèles NovaPanel (fonction pure, testable)."""
     data = ProxmoxData()
     nodes = [r for r in resources if r.get("type") == "node"]
     vms = [r for r in resources if r.get("type") in ("qemu", "lxc") and not r.get("template")]
-    storages = [r for r in resources if r.get("type") == "storage" and r.get("status") == "available"]
+    storages = [r for r in resources if r.get("type") == "storage"]
 
     for r in vms:
         running = r.get("status") == "running"
@@ -113,6 +237,9 @@ def build_proxmox_data(resources: list[dict], tasks_raw: list[dict], version_of,
                 mem_used=int(r.get("mem") or 0) if running else 0,
                 mem_total=int(r.get("maxmem") or 0),
                 uptime=int(r.get("uptime") or 0),
+                cores=float(r.get("maxcpu") or 0),
+                disk_total=int(r.get("maxdisk") or 0),
+                tags=[t for t in re.split(r"[;, ]", r.get("tags") or "") if t],
             )
         )
 
@@ -148,14 +275,31 @@ def build_proxmox_data(resources: list[dict], tasks_raw: list[dict], version_of,
     # Stockage : un stockage partagé apparaît une fois par nœud → on le compte une seule fois
     seen: set[str] = set()
     for s in storages:
-        key = s.get("storage", "") if s.get("shared") else s.get("id", "")
+        shared = bool(s.get("shared"))
+        key = s.get("storage", "") if shared else s.get("id", "")
         if key in seen:
             continue
         seen.add(key)
-        data.storage_used += int(s.get("disk") or 0)
-        data.storage_total += int(s.get("maxdisk") or 0)
+        available = s.get("status") == "available"
+        data.storages.append(
+            Storage(
+                id=s.get("id", key),
+                name=s.get("storage", key),
+                host="shared" if shared else s.get("node", ""),
+                kind="proxmox",
+                type=s.get("plugintype", ""),
+                content=[c for c in (s.get("content") or "").split(",") if c],
+                shared=shared,
+                used=int(s.get("disk") or 0),
+                total=int(s.get("maxdisk") or 0),
+                status="available" if available else "unavailable",
+            )
+        )
+        if available:
+            data.storage_used += int(s.get("disk") or 0)
+            data.storage_total += int(s.get("maxdisk") or 0)
 
-    for t in sorted(tasks_raw, key=lambda x: x.get("starttime", 0), reverse=True)[:8]:
+    for t in sorted(tasks_raw, key=lambda x: x.get("starttime", 0), reverse=True)[:50]:
         if "endtime" not in t or t.get("status") in (None, ""):
             status = "running"
         elif t.get("status") == "OK":

@@ -3,39 +3,13 @@ import { CheckCircle2, Loader2, XCircle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useI18n } from "@/i18n/I18nProvider"
-import type { Lang } from "@/i18n/translations"
 import type { Task } from "@/lib/api"
+import { taskLabel } from "@/lib/labels"
 import { timeAgo } from "@/lib/utils"
 
-/** Libellés lisibles des types de tâches Proxmox les plus courants. */
-const TASK_LABELS: Record<string, { fr: string; en: string }> = {
-  vzdump: { fr: "Sauvegarde", en: "Backup" },
-  qmstart: { fr: "Démarrage VM", en: "VM start" },
-  qmstop: { fr: "Arrêt VM", en: "VM stop" },
-  qmshutdown: { fr: "Extinction VM", en: "VM shutdown" },
-  qmreboot: { fr: "Redémarrage VM", en: "VM reboot" },
-  qmigrate: { fr: "Migration VM", en: "VM migration" },
-  qmsnapshot: { fr: "Snapshot VM", en: "VM snapshot" },
-  qmclone: { fr: "Clonage VM", en: "VM clone" },
-  qmcreate: { fr: "Création VM", en: "VM creation" },
-  qmdestroy: { fr: "Suppression VM", en: "VM destroy" },
-  vzstart: { fr: "Démarrage CT", en: "CT start" },
-  vzstop: { fr: "Arrêt CT", en: "CT stop" },
-  vzshutdown: { fr: "Extinction CT", en: "CT shutdown" },
-  vzcreate: { fr: "Création CT", en: "CT creation" },
-  vzmigrate: { fr: "Migration CT", en: "CT migration" },
-  vncproxy: { fr: "Console VNC", en: "VNC console" },
-  termproxy: { fr: "Terminal", en: "Terminal" },
-  aptupdate: { fr: "Mise à jour APT", en: "APT update" },
-  startall: { fr: "Démarrage global", en: "Start all" },
-  stopall: { fr: "Arrêt global", en: "Stop all" },
-  imgdel: { fr: "Suppression d'image", en: "Image delete" },
-  download: { fr: "Téléchargement", en: "Download" },
-}
 
-const taskLabel = (type: string, lang: Lang) => TASK_LABELS[type]?.[lang] ?? type
-
-export function RecentTasks({ tasks }: { tasks: Task[] }) {
+export function RecentTasks({ tasks: allTasks, limit = 8 }: { tasks: Task[]; limit?: number }) {
+  const tasks = allTasks.slice(0, limit)
   const { t, lang } = useI18n()
 
   return (
