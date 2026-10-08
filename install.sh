@@ -68,8 +68,8 @@ command -v systemctl >/dev/null && [ -d /run/systemd/system ] || die "systemd es
 # ── Désinstallation ─────────────────────────────────────────
 if [ "$UNINSTALL" = 1 ]; then
   step "Désinstallation de NovaPanel"
-  systemctl disable --now novapanel.service 2>/dev/null || true
-  rm -f /etc/systemd/system/novapanel.service /usr/local/bin/novapanel
+  systemctl disable --now novapanel.service novapanel-update.path 2>/dev/null || true
+  rm -f /etc/systemd/system/novapanel.service /etc/systemd/system/novapanel-update.{service,path} /usr/local/bin/novapanel
   systemctl daemon-reload
   rm -rf "$APP_DIR"
   if [ "$PURGE" = 1 ]; then
@@ -253,8 +253,27 @@ if [ -f "$SRC/deploy/novapanel.service" ]; then
 else
   die "deploy/novapanel.service introuvable dans la source"
 fi
+# Mise à jour depuis l'interface : le service (non root) dépose un fichier « demande » ;
+# systemd le détecte et lance ce script en root, sans sudo ni droit supplémentaire pour l'application.
+cat >/etc/systemd/system/novapanel-update.service <<EOF
+[Unit]
+Description=NovaPanel - mise a jour demandee depuis l'interface
+[Service]
+Type=oneshot
+ExecStartPre=/bin/rm -f $DATA_HOME/data/update.request
+ExecStart=/bin/bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash -s -- --yes >$DATA_HOME/data/update.log 2>&1; echo "__NOVA_UPDATE_EXIT=\$\$?" >>$DATA_HOME/data/update.log; chmod 644 $DATA_HOME/data/update.log'
+EOF
+cat >/etc/systemd/system/novapanel-update.path <<EOF
+[Unit]
+Description=NovaPanel - surveille les demandes de mise a jour
+[Path]
+PathExists=$DATA_HOME/data/update.request
+[Install]
+WantedBy=multi-user.target
+EOF
 systemctl daemon-reload
 systemctl enable novapanel.service >/dev/null 2>&1
+systemctl enable --now novapanel-update.path >/dev/null 2>&1 || warn "mise à jour depuis l'interface indisponible"
 systemctl restart novapanel.service
 
 step "Démarrage du service"

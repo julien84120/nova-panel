@@ -24,6 +24,7 @@
 | 5 | Historique par hôte persistant (1 h / 24 h / 7 j), graphique « une courbe par machine » ; pages Réseau (interfaces, ponts, VLAN, réseaux Docker) et Sauvegardes (tâches planifiées, couverture, archives, sauvegarde immédiate) | ✅ |
 | 6 | Snapshots (créer avec ou sans RAM, restaurer avec confirmation tapée, supprimer, vue globale des vieux snapshots) ; alertes (10 règles réglables) et notifications e-mail, Discord, Telegram, ntfy, webhook | ✅ |
 | 7 | Utilisateurs et rôles : Lecteur (lecture seule), Opérateur (actions), Administrateur (comptes, alertes) ; désactivation, réinitialisation de mot de passe, garde-fous (dernier admin, soi-même) | ✅ |
+| 8 | Mise à jour en un clic depuis Paramètres (installation native) : `install.sh` lancé en arrière-plan par une unité systemd, suivi du journal | ✅ |
 
 ## Stack
 
@@ -220,6 +221,13 @@ Puis dans `backend/.env` :
 DOCKER_SSH_HOST=nova-oracle
 DOCKER_DISPLAY_NAME=oracle-docker
 ```
+
+## Mise à jour depuis l'interface
+
+Installation native (`install.sh`) : **Paramètres → Compte → Mise à jour de NovaPanel** (administrateurs).
+Le service, non root, dépose simplement un fichier `update.request` ; l'unité systemd `novapanel-update.path`
+le détecte et relance le script d'installation officiel en root (configuration, comptes et données conservés).
+Journal : `/var/lib/novapanel/data/update.log`. Avec Docker : `docker compose pull && docker compose up -d`.
 
 ## Utilisateurs et rôles
 

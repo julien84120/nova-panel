@@ -355,6 +355,17 @@ export interface UserAccount {
   sessions: number
 }
 
+export interface UpdateStatus {
+  current: string
+  latest: string | null
+  available: boolean
+  supported: boolean
+  running: boolean
+  last_exit: number | null
+  last_run: number | null
+  log: string[]
+}
+
 export interface AuthStatus {
   setup_required: boolean
   authenticated: boolean
@@ -459,6 +470,10 @@ export const api = {
     post<{ ok: boolean }>(`/api/docker/containers/${encodeURIComponent(id)}/${action}`),
   containerLogs: (id: string, tail = 200) =>
     request<{ id: string; name: string; logs: string }>(`/api/docker/containers/${encodeURIComponent(id)}/logs?tail=${tail}`),
+  system: {
+    update: () => request<UpdateStatus>("/api/system/update"),
+    startUpdate: () => post<{ ok: boolean }>("/api/system/update"),
+  },
   users: {
     list: () => request<UserAccount[]>("/api/users"),
     create: (username: string, password: string, role: Role) =>

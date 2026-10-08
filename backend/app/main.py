@@ -17,6 +17,7 @@ from app.db import Database
 from app.metrics import MetricsStore
 from app.routes.alerts import router as alerts_router
 from app.routes.infra import router as infra_router
+from app.routes.system import router as system_router
 from app.routes.users import router as users_router
 from app.schemas import Dashboard, Guest, Host
 
@@ -78,7 +79,7 @@ def required_role(method: str, path: str) -> str | None:
     """Contrôle d'accès central, refus par défaut : toute écriture exige au moins « operator »."""
     if path.startswith("/api/auth/"):
         return None  # déconnexion, changement de son propre mot de passe
-    if path.startswith(("/api/users", "/api/alerts/config", "/api/alerts/channels")):
+    if path.startswith(("/api/users", "/api/alerts/config", "/api/alerts/channels", "/api/system")):
         return "admin"
     if method in SAFE_METHODS:
         return "viewer"
@@ -253,6 +254,7 @@ def guests(request: Request, type: str | None = None, host: str | None = None):
 app.include_router(infra_router)
 app.include_router(alerts_router)
 app.include_router(users_router)
+app.include_router(system_router)
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)

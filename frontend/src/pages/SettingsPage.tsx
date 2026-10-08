@@ -14,6 +14,7 @@ import { api } from "@/lib/api"
 import { authErrorMessage } from "@/lib/authErrors"
 import { NotificationSettings } from "@/components/alerts/NotificationSettings"
 import { UsersSettings } from "@/components/users/UsersSettings"
+import { UpdateCard } from "@/components/system/UpdateCard"
 import { usePermissions } from "@/hooks/usePermissions"
 import { useQueryParam } from "@/hooks/useQueryParam"
 import { cn } from "@/lib/utils"
@@ -143,6 +144,7 @@ export function SettingsPage() {
             <p className="pt-2 text-xs text-muted-foreground">{t("settings.sourcesHint")}</p>
           </CardContent>
         </Card>
+        {isAdmin && <UpdateCard />}
       </div>
       )}
     </div>
