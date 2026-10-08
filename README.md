@@ -1,10 +1,12 @@
-![Vues de profil](https://komarev.com/ghpvc/?username=julien84120-delta&label=Vues+du+projet&color=blue&style=flat)
-
 <p align="center">
   <img src="frontend/public/favicon.svg" width="64" alt="NovaPanel" />
 </p>
 
 <h1 align="center">NovaPanel</h1>
+
+<p align="center">
+  <img src="https://komarev.com/ghpvc/?username=julien84120-novapanel&label=Vues+du+projet&color=blue&style=flat" alt="Compteur de vues" />
+</p>
 
 <p align="center">
   Tableau de bord open-source pour piloter un hyperviseur <b>Proxmox VE</b> et des serveurs <b>Ubuntu / Docker</b>.<br/>
